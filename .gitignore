@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local secrets and machine config
+.env
+.env.*
+*.local.yaml
+*.local.yml
+config.local.yaml
+config.local.yml
+
+# Logs and temporary files
+*.log
+logs.txt
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+
+# Runtime outputs
+results/
+.smoke_test/
+optimized_guidelines/
+error_analysis_logs/
+ASRO/optimized_guidelines/
+ASRO/result.txt
+*_cmp.jpg
+error_report_*.csv
+
+# Large/private datasets.
+# Keep the small demo data and schema sample tracked.
+data/*
+
+!data/sample/
+!data/sample/**
+
+# Archives and model/data artifacts
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.ckpt
+*.pt
+*.pth
+*.onnx
+
+# Ignores V0
+v0/
