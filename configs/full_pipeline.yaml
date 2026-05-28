@@ -1,8 +1,8 @@
 pipeline:
   mode: ASRO
-  input_dir: ./DATA/processed_5.0pct_66_67/processed_5.0pct_66_67/English_Grade12_003/Scan
+  input_dir: ./data/processed_5.0pct_66_67/processed_5.0pct_66_67/English_Grade12_003/Scan
   out_dir: ./results/full_pipeline
-  json_path: ./DATA/processed_5.0pct_66_67/processed_5.0pct_66_67/dataset.json
+  json_path: ./data/processed_5.0pct_66_67/processed_5.0pct_66_67/dataset.json
   rules_file: null
   target_id: "66"
   dataset_name: English_Grade12_003

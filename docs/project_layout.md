@@ -11,9 +11,9 @@ files by purpose.
 - `scripts/`: Standalone helper scripts and shell launchers.
 - `tests/`: Local smoke tests and test helpers.
 - `docs/`: Notes and project documentation.
-- `DATA/`: Local datasets and sample input files.
+- `data/`: Local datasets and sample input files.
 - `results/`: Generated pipeline outputs.
 
 Keep large data files out of source inspection. Use
-`DATA/**/dataset_sample_schema.json` for schema checks instead of opening
+`data/**/dataset_sample_schema.json` for schema checks instead of opening
 `dataset.json`.

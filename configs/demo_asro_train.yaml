@@ -1,6 +1,6 @@
 asro_train:
-  data_dir: ./DATA/sample/images
-  json_path: ./DATA/sample/dataset.json
+  data_dir: ./data/sample/images
+  json_path: ./data/sample/dataset.json
   dataset_name: Demo_English_001
   target_q: "66"
   train_n: null

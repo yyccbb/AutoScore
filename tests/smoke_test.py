@@ -110,7 +110,7 @@ def run_smoke(data_root: Path, out_root: Path, samples_per_paper: int, target_id
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Local smoke test for the ExamOCR scoring pipeline.")
-    parser.add_argument("--data-root", default="DATA/processed_5.0pct_66_67/processed_5.0pct_66_67", help="Directory containing English_Grade12_* paper folders.")
+    parser.add_argument("--data-root", default="data/processed_5.0pct_66_67/processed_5.0pct_66_67", help="Directory containing English_Grade12_* paper folders.")
     parser.add_argument("--out-root", default=".smoke_test", help="Temporary smoke-test output directory.")
     parser.add_argument("--samples-per-paper", type=int, default=6, help="Pick 5-10 cases per paper.")
     parser.add_argument("--target-id", default="66,67", help="Question id filter, for example 66 or 66,67.")

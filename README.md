@@ -36,7 +36,7 @@ The pipeline is dataset-driven. Official question metadata and rubrics are loade
 |   `-- run_demo_asro_train.sh
 |-- tests/
 |   `-- smoke_test.py
-`-- DATA/
+`-- data/
     `-- sample/                # small local demo dataset
 ```
 
@@ -71,7 +71,7 @@ Important fields:
 - Human labels are in `student_answer[*].grading[qid]`.
 - Code should use `reference_analysis` with `.get(...)` because it may be absent.
 
-For schema inspection, use `DATA/processed_5.0pct_66_67/processed_5.0pct_66_67/dataset_sample_schema.json`. Do not inspect the full `dataset.json` during development unless explicitly required.
+For schema inspection, use `data/processed_5.0pct_66_67/processed_5.0pct_66_67/dataset_sample_schema.json`. Do not inspect the full `dataset.json` during development unless explicitly required.
 
 ## Main Pipeline
 
@@ -128,7 +128,7 @@ The console prints QWK and MAE when human labels are available.
 Standalone OCR:
 
 ```bash
-python scripts/run_ocr.py --input_dir DATA/sample/images --config configs/demo_baseline.yaml --limit 20
+python scripts/run_ocr.py --input_dir data/sample/images --config configs/demo_baseline.yaml --limit 20
 ```
 
 `--num` is accepted as an alias for `--limit`. OCR writes `.txt` files next to the source images.

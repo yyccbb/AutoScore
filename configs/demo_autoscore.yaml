@@ -1,8 +1,8 @@
 pipeline:
   mode: autoscore
-  input_dir: ./DATA/sample/images
+  input_dir: ./data/sample/images
   out_dir: ./results/demo_autoscore
-  json_path: ./DATA/sample/dataset.json
+  json_path: ./data/sample/dataset.json
   rules_file: null
   target_id: "66"
   dataset_name: Demo_English_001
