@@ -22,7 +22,7 @@ The pipeline is dataset-driven. Official question metadata and rubrics are loade
 |   |-- llm_api.py             # OpenAI-compatible API wrapper
 |   |-- ocr.py                 # image OCR utilities
 |   |-- prompts.py             # pipeline prompts
-|   `-- config.py              # fallback local config
+|   `-- env.py                 # loads local .env into runtime env
 |-- configs/
 |   |-- demo_baseline.yaml
 |   |-- demo_autoscore.yaml
@@ -48,13 +48,13 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Set an API key through the environment or YAML config:
+Set an API key through environment variables, a local `.env` file, or YAML config:
 
-```bash
-export OPENROUTER_API_KEY="your_api_key"
+```dotenv
+OPENROUTER_API_KEY=your_api_key
 ```
 
-The API wrapper is OpenAI-compatible and uses `base_url` from the config. Do not commit real API keys in YAML files.
+`.env` is ignored by git and loaded by the Python entrypoints. The API wrapper is OpenAI-compatible and uses `base_url` from the config. Do not commit real API keys in YAML files.
 
 ## Dataset Format
 

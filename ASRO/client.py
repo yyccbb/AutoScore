@@ -14,8 +14,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from utils import config
-
 def _load_shared_call_llm():
     module_path = Path(__file__).resolve().parents[1] / "utils" / "llm_api.py"
     spec = importlib.util.spec_from_file_location("shared_llm_api", module_path)
@@ -41,7 +39,7 @@ class GradeOptClient:
         reflector_max_tokens=None,
         reflector_timeout=None,
     ):
-        self.api_key = api_key or config.OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url
         self.timeout = timeout
         self.reflector_timeout = reflector_timeout

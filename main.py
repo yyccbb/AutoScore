@@ -24,7 +24,10 @@ finally:
     for _path in reversed(_shadowing_paths):
         sys.path.insert(0, _path)
 
-import utils.config as config
+from utils.env import load_env
+
+load_env()
+
 from utils.llm_api import call_llm
 from utils.ocr import image_extensions, run_ocr_for_directory
 import utils.prompts as prompts
@@ -768,7 +771,7 @@ def run_autoscore_pipeline(
     res_dir = Path(out_dir)
     res_dir.mkdir(parents=True, exist_ok=True)
 
-    final_api_key = api_key or os.getenv("OPENROUTER_API_KEY") or config.OPENROUTER_API_KEY
+    final_api_key = api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
     client = AutoScoreClient(
         api_key=final_api_key,
         base_url=base_url,

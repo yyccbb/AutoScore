@@ -5,11 +5,18 @@ from pathlib import Path
 import sys
 import yaml
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.env import load_env
+
+load_env()
+
 from utils_asro.data_loader import GradeOptDataLoader
 from utils_asro.progress import log_progress
 from engine import ASROEngine
 from client import GradeOptClient
-from utils import config
 
 def load_yaml_config(config_path, section):
     path = Path(config_path)
@@ -61,7 +68,7 @@ def _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q):
     ocr_result = run_ocr_for_directory(
         input_dir=data_path,
         model_name=cfg.get("ocr_model", "qwen/qwen-2-vl-72b-instruct"),
-        api_key=cfg.get("api_key") or config.OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+        api_key=cfg.get("api_key") or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY"),
         base_url=cfg.get("base_url", "https://openrouter.ai/api/v1"),
         force_ocr=cfg.get("force_ocr", False),
         workers=cfg.get("ocr_workers", cfg.get("max_workers", 5)),
