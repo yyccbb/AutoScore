@@ -67,7 +67,7 @@ def _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q):
 
     ocr_result = run_ocr_for_directory(
         input_dir=data_path,
-        model_name=cfg.get("ocr_model", "qwen/qwen-2-vl-72b-instruct"),
+        model_name=cfg.get("ocr_model"),
         api_key=cfg.get("api_key") or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY"),
         base_url=cfg.get("base_url", "https://openrouter.ai/api/v1"),
         force_ocr=cfg.get("force_ocr", False),
@@ -90,6 +90,9 @@ def _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q):
 
 
 def _load_task_definition(json_path, dataset_name, target_q):
+    """
+        Prepares the initial G (question + analysis + grading rubrics + new rules, left empty for now)
+    """
     log_progress("guideline", "loading task definition", dataset=dataset_name, target_q=target_q)
     fallback = {
         "Gqs": "",

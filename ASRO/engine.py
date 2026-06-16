@@ -310,7 +310,7 @@ class ASROEngine:
             scan_results = self.evaluate_minibatch_sequential(minibatch, current_guideline)
             minibatch_failed_count = len(self.failed_results)
 
-            error_modes = self._get_top_k_modes(scan_results, self.K)
+            error_modes = self._get_top_k_modes(scan_results, self.K) # accumulated misconf
             log_progress(
                 "modes",
                 "top error modes selected",

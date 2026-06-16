@@ -55,7 +55,7 @@ def main():
 
     result = run_ocr_for_directory(
         input_dir=args.input_dir,
-        model_name=args.ocr_model or cfg.get("ocr_model", "qwen/qwen-2-vl-72b-instruct"),
+        model_name=args.ocr_model or cfg.get("ocr_model"),
         api_key=cfg.get("api_key"),
         base_url=cfg.get("base_url", "https://openrouter.ai/api/v1"),
         prompt=cfg.get("prompt"),

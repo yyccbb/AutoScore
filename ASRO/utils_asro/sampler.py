@@ -64,8 +64,8 @@ class ASROSampler:
         seed_emb = self.model.encode([s["text"] for s in seeds], convert_to_tensor=True)
         all_emb = self.model.encode([s["text"] for s in scored_samples], convert_to_tensor=True)
 
-        cosine_scores = util.cos_sim(seed_emb, all_emb)
-        neighbor_indices = torch.topk(cosine_scores, k=min(batch_size // k, len(scored_samples)), dim=1).indices.flatten().tolist()
+        cosine_scores = util.cos_sim(seed_emb, all_emb) # cos similarities (K, #all)
+        neighbor_indices = torch.topk(cosine_scores, k=min(batch_size // k, len(scored_samples)), dim=1).indices.flatten().tolist() # sample #batch_size high similarity samples for each of the top k samples. The top K samples are usually included inside all_emb hence chosen here.
         minibatch = [scored_samples[i]["sample"] for i in set(neighbor_indices)]
         log_progress("sampler", "minibatch neighbors selected", minibatch=len(minibatch), requested=batch_size)
         return minibatch
