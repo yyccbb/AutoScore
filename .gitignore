@@ -8,6 +8,10 @@ __pycache__/
 .coverage
 htmlcov/
 
+# IDEs
+.idea
+.vscode
+
 # Virtual environments
 .venv/
 venv/
@@ -59,5 +63,8 @@ data/*
 *.pth
 *.onnx
 
-# Ignores V0
+# Deprecated V0
 v0/
+
+# Temporary folder
+tmp/
