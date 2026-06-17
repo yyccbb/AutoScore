@@ -166,7 +166,7 @@ class GradeOptClient:
         return text
 
     def _parse_marker_response(self, content):
-        if not content or "Error" in content:
+        if not content:
             return 0.0, "API Call Failed"
 
         text = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()

@@ -98,6 +98,8 @@ def call_llm(
         try:
             response = client.chat.completions.create(**payload)
             result = response.choices[0].message.content
+            if result is None or result.strip() == "":
+                raise ValueError("No response from LLM")
             return result
         except Exception as e:
             print(e)            
