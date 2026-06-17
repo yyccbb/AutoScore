@@ -15,7 +15,7 @@ class ASROSampler:
         self.misconf_tier_weight = float(misconf_tier_weight)
         self.max_workers = max(1, int(max_workers))
         log_progress("sampler", "loading SentenceTransformer", model=model_name)
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_name, local_files_only=True)
         if torch.cuda.is_available():
             self.model = self.model.to("cuda")
             log_progress("sampler", "SentenceTransformer moved to CUDA", model=model_name)
@@ -68,4 +68,4 @@ class ASROSampler:
         neighbor_indices = torch.topk(cosine_scores, k=min(batch_size // k, len(scored_samples)), dim=1).indices.flatten().tolist() # sample #batch_size high similarity samples for each of the top k samples. The top K samples are usually included inside all_emb hence chosen here.
         minibatch = [scored_samples[i]["sample"] for i in set(neighbor_indices)]
         log_progress("sampler", "minibatch neighbors selected", minibatch=len(minibatch), requested=batch_size)
-        return minibatch
+        return minibatch, score_results

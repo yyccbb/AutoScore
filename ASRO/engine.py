@@ -139,6 +139,20 @@ class ASROEngine:
                 writer.writeheader()
             writer.writerow(metrics)
 
+    def _save_intermediate_records(self, round_idx: int, dataset: list, llm_response: list, is_validation: bool):
+        subdir_path = os.path.join(self.output_dir, f"rnd{round_idx}")
+        os.makedirs(subdir_path, exist_ok=True)
+
+        val_prefix = "val_" if is_validation else ""
+        dataset_save_path = os.path.join(subdir_path, val_prefix + "dataset.json")
+        llm_response_save_path = os.path.join(subdir_path, val_prefix + "llm.json")
+
+        with open(dataset_save_path, "w", encoding="utf-8") as f:
+            json.dump(dataset, f, ensure_ascii=False, indent=4)
+
+        with open(llm_response_save_path, "w", encoding="utf-8") as f:
+            json.dump(llm_response, f, ensure_ascii=False, indent=4)
+
     def _process_single_mode(self, mode, p_current, scan_results, global_cm_str, round_idx=1):
         try:
             safe_mode = tuple(int(x) for x in mode)
@@ -304,9 +318,12 @@ class ASROEngine:
 
         for round_idx in range(1, self.T + 1):
             log_progress("round", "round started", round=round_idx, total_rounds=self.T, temperature=f"{temperature:.4f}")
+
             log_progress("sampling", "minibatch sampling started", round=round_idx, train=len(D_train))
-            minibatch = self.sampler.sample_minibatch(D_train, current_guideline, self.client)
+            minibatch, full_llm_response = self.sampler.sample_minibatch(D_train, current_guideline, self.client)
+            self._save_intermediate_records(round_idx, D_train, full_llm_response, is_validation=False)
             log_progress("sampling", "minibatch sampling finished", round=round_idx, minibatch=len(minibatch))
+
             scan_results = self.evaluate_minibatch_sequential(minibatch, current_guideline)
             minibatch_failed_count = len(self.failed_results)
 
@@ -352,6 +369,7 @@ class ASROEngine:
             log_progress("consolidate", "priority consolidation finished", round=round_idx)
 
             validation_results = self.evaluate_validation_sequential(p_full, D_val)
+            self._save_intermediate_records(round_idx, D_val, validation_results, is_validation=True)
             validation_failed_count = len(self.failed_results)
             summary = self.summarize_eval_results(validation_results)
             new_misconf = summary["avg_misconf"]
