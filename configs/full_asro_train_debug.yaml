@@ -9,10 +9,10 @@ asro_train:
   max_score: 15.0
   tier_count: 5
   misconf_tier_weight: 10.0
-  T: 10
+  T: 5 # TODO: Change
   B: 4
   K: 4
-  max_workers: 5
+  max_workers: 16 # TODO: Change
   api_key: null
   base_url: https://openrouter.ai/api/v1
   grader_model: deepseek/deepseek-v4-flash
@@ -26,10 +26,10 @@ asro_train:
   debug: false
   ocr: true
   ocr_before_train: true
-  force_ocr: false
+  force_ocr: false # TODO: Change
   ocr_model: qwen/qwen3.7-plus
-  ocr_workers: 5
+  ocr_workers: 16
   debug_ocr: false
   ocr_num: null
   ocr_limit: null
-  output_dir: ./results/train_001_qwen3.7
+  output_dir: ./results/rm_gkc # TODO: Change

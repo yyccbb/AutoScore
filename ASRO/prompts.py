@@ -4,9 +4,8 @@
 # GRADER_PROMPT_TEMPLATE = """
 # [GRADING SYSTEM]
 # 1. Question Stem (Gqs): {Gqs}
-# 2. Key Concept (Gkc): {Gkc}
-# 3. Scoring Rubrics (Gsr): {Gsr}
-# 4. Adaptation Rules (Gar): {Gar} (Priority: HIGHEST)
+# 2. Scoring Rubrics (Gsr): {Gsr}
+# 3. Adaptation Rules (Gar): {Gar} (Priority: HIGHEST)
 
 # [STUDENT INPUT]
 # "{text}"
@@ -30,9 +29,8 @@ Goal: Evaluate the essay into the correct Tier and Score using the provided guid
 
 [CONTEXT]
 1. Question (Gqs): {Gqs}
-2. Key Points (Gkc): {Gkc}
-3. Scoring Rubrics (Gsr): {Gsr}
-4. Adaptation Rules (Gar): {Gar} (⚠️ Priority: HIGHEST)
+2. Scoring Rubrics (Gsr): {Gsr}
+3. Adaptation Rules (Gar): {Gar} (⚠️ Priority: HIGHEST)
 
 [STUDENT ESSAY]
 "{text}"
@@ -146,18 +144,7 @@ TASK_66_STEM = """
 """
 
 # ==========================================
-# 2. Key Concept (Gkc) - 核心概念
-# ==========================================
-TASK_66_KEY_CONCEPT = """
-成功的作文必须涵盖以下三个维度：
-1. 课程内容简介：清晰说明英语课程涵盖了哪些模块或特色。
-2. 开设现状：说明课程目前的运行频率、参与人数或教学形式。
-3. 师生评价：客观描述学生对课程的正面反馈或实际收获。
-语言要求：表达准确，逻辑连贯，能体现应用文的交际功能。
-"""
-
-# ==========================================
-# 3. Scoring Rubric (Gsr) - 评分量表 (你原有的内容)
+# 2. Scoring Rubric (Gsr) - 评分量表 (你原有的内容)
 # ==========================================
 TASK_66_RUBRIC = """
 【总分：15分】

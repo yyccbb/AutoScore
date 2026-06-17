@@ -157,7 +157,7 @@ Document ID: {file_name}
 
 Classify the response into a coarse tier only. Do not assign a final numeric score.
 
-Do not mechanically compare the response with the reference answer. Accept valid alternative ideas, examples, and expressions.
+Accept valid alternative ideas, examples, and expressions that satisfy the task requirements.
 Important boundary rules:
 - If cause, impact, and relief method are all covered and the message is clear, do not assign Tier 3 merely because of minor grammar, spelling, punctuation, or collocation errors.
 - Minor language errors should lower the tier only when they affect communication or show clear inability

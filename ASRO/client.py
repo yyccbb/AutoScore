@@ -90,7 +90,6 @@ class GradeOptClient:
         clean_gar = self._purify_gar(raw_gar)
         return prompts.GRADER_PROMPT_TEMPLATE.format(
             Gqs=guideline.get("Gqs", ""),
-            Gkc=guideline.get("Gkc", ""),
             Gsr=guideline.get("Gsr", ""),
             Gar=clean_gar,
             text=essay_text,

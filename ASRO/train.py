@@ -91,7 +91,7 @@ def _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q):
 
 def _load_task_definition(json_path, dataset_name, target_q):
     """
-        Prepares the initial G (question + analysis + grading rubrics + new rules, left empty for now)
+        Prepares the initial G (question + grading rubrics + new rules, left empty for now)
     """
     log_progress("guideline", "loading task definition", dataset=dataset_name, target_q=target_q)
     fallback = {
@@ -113,18 +113,9 @@ def _load_task_definition(json_path, dataset_name, target_q):
         if isinstance(qinfo, dict):
             question = qinfo.get("question")
             rubric = qinfo.get("rubric")
-            reference_answer = qinfo.get("reference_answer")
-            reference_analysis = qinfo.get("reference_analysis")
-            key_parts = []
-            if reference_answer:
-                key_parts.append(f"Reference Answer:\n{reference_answer}")
-            if reference_analysis:
-                key_parts.append(f"Reference Analysis:\n{reference_analysis}")
 
             if question:
                 fallback["Gqs"] = question if isinstance(question, str) else json.dumps(question, ensure_ascii=False, indent=2)
-            if key_parts:
-                fallback["Gkc"] = "\n\n".join(key_parts)
             if rubric:
                 fallback["Gsr"] = rubric if isinstance(rubric, str) else json.dumps(rubric, ensure_ascii=False, indent=2)
             if not fallback["Gsr"]:
