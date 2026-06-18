@@ -41,23 +41,48 @@ class ASROSampler:
         log_progress("sampler", "training sample scoring finished", samples=len(score_results))
         return score_results
 
+    def _build_score_record(self, sample, score_result):
+        score, lp_pred, lp_true, reasoning = score_result
+        score = float(score)
+        true_score = float(sample["true_score"])
+        lp_pred = float(lp_pred)
+        lp_true = float(lp_true)
+
+        is_correct = int(round(score * 2)) == int(round(true_score * 2))
+        true_tier = _score_to_tier(true_score, self.max_score, self.tier_count)
+        pred_tier = _score_to_tier(score, self.max_score, self.tier_count)
+        fallback_misconf = ((true_score - score) ** 2) + self.misconf_tier_weight * (abs(true_tier - pred_tier) ** 2)
+        if lp_pred == -1.0 and lp_true == -1.0:
+            misconf = fallback_misconf
+        else:
+            misconf = -lp_pred if is_correct else max(fallback_misconf, (true_score - score) ** 2 * (lp_pred - lp_true))
+
+        return {
+            "id": sample.get("id", "unknown"),
+            "true": true_score,
+            "pred": score,
+            "misconf": float(misconf),
+            "reasoning": reasoning,
+        }
+
     def sample_minibatch(self, D_train, current_g, client, k=5, batch_size=40):
+        score_results = self._score_samples(D_train, current_g, client)
+        if len(score_results) != len(D_train):
+            raise RuntimeError(
+                f"Sampler scoring returned {len(score_results)} result(s) for {len(D_train)} training sample(s)."
+            )
+        score_records = [
+            self._build_score_record(sample, score_result)
+            for sample, score_result in zip(D_train, score_results)
+        ]
+
         if len(D_train) <= batch_size:
             log_progress("sampler", "using full training set as minibatch", train=len(D_train), batch_size=batch_size)
-            return D_train
+            return D_train, score_records
 
         scored_samples = []
-        score_results = self._score_samples(D_train, current_g, client)
-        for i, (score, lp_pred, lp_true, _) in enumerate(tqdm(score_results, desc="Sampling", leave=False, ncols=70)):
-            is_correct = int(round(score * 2)) == int(round(D_train[i]["true_score"] * 2))
-            true_tier = _score_to_tier(D_train[i]["true_score"], self.max_score, self.tier_count)
-            pred_tier = _score_to_tier(score, self.max_score, self.tier_count)
-            fallback_misconf = ((D_train[i]["true_score"] - score) ** 2) + self.misconf_tier_weight * (abs(true_tier - pred_tier) ** 2)
-            if lp_pred == -1.0 and lp_true == -1.0:
-                m_val = fallback_misconf
-            else:
-                m_val = -lp_pred if is_correct else max(fallback_misconf, (D_train[i]["true_score"] - score) ** 2 * (lp_pred - lp_true))
-            scored_samples.append({"sample": D_train[i], "misconf": m_val, "text": D_train[i]["text"]})
+        for i, record in enumerate(tqdm(score_records, desc="Sampling", leave=False, ncols=70)):
+            scored_samples.append({"sample": D_train[i], "misconf": record["misconf"], "text": D_train[i]["text"]})
 
         seeds = sorted(scored_samples, key=lambda x: x["misconf"], reverse=True)[:k]
         log_progress("sampler", "encoding seed and sample embeddings", seeds=len(seeds), samples=len(scored_samples))
@@ -68,4 +93,4 @@ class ASROSampler:
         neighbor_indices = torch.topk(cosine_scores, k=min(batch_size // k, len(scored_samples)), dim=1).indices.flatten().tolist() # sample #batch_size high similarity samples for each of the top k samples. The top K samples are usually included inside all_emb hence chosen here.
         minibatch = [scored_samples[i]["sample"] for i in set(neighbor_indices)]
         log_progress("sampler", "minibatch neighbors selected", minibatch=len(minibatch), requested=batch_size)
-        return minibatch, score_results
+        return minibatch, score_records
