@@ -61,8 +61,10 @@ def print_round_dashboard(round_idx, results, qwk):
     print(f"📈 [ROUND {round_idx} DASHBOARD]")
     print(f"✅ QWK (Current): {qwk:.4f} | 🧠 Avg Confidence: {np.mean(probs):.2f}")
     print(f"\n🔍 Top-5 Problematic Samples:")
+    print(f"{'ID':>12} | {'True':>6} | {'Pred':>6} | {'Misconf':>10}")
     for s in sorted_samples[:5]:
-        print(f"{s['true']:6.1f} | {s['pred']:6.1f} | {s['misconf']:10.2f}")
+        sample_id = str(s.get("id", "unknown"))
+        print(f"{sample_id:>12} | {s['true']:6.1f} | {s['pred']:6.1f} | {s['misconf']:10.2f}")
     print("="*70 + "\n")
 
 def _score_to_tier(score, max_score=15.0, tier_count=5):
