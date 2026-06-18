@@ -44,16 +44,12 @@ class GradeOptDataLoader:
             return "Mid"
         return "High"
 
-    def get_balanced_splits(self, all_txt_dir, q_id="66", train_size=None, val_size=None, val_ratio=0.25, sample_ratio=None):
-        """
-        分层抽取平衡数据集。
-        train_size 和 val_size 建议设为 3 的倍数，以便各档位平分。
-        """
+    def load_samples(self, all_txt_dir, q_id="66"):
+        """Load usable OCR samples into a flat list before any split logic."""
         all_txt_dir = Path(all_txt_dir)
-        # 使用 defaultdict 按档位分类存储样本
-        tier_buckets = defaultdict(list)
+        q_id = str(q_id)
+        samples = []
 
-        # 1. 扫描文件并按档位入桶
         # 兼容你的文件名格式: {id}_{q_id}_{score}.txt
         txt_files = list(all_txt_dir.glob(f"*_{q_id}_*.txt"))
         if not txt_files:
@@ -62,11 +58,11 @@ class GradeOptDataLoader:
 
         for tf in txt_files:
             student_id, parsed_qid = self._parse_txt_stem(tf.stem)
-            if not student_id or parsed_qid != str(q_id):
+            if not student_id or parsed_qid != q_id:
                 print(f"Skipping unparsable OCR file: {tf.name}")
                 continue
-            true_score = self.score_lookup.get((student_id, str(q_id)))
-            
+            true_score = self.score_lookup.get((student_id, q_id))
+
             if true_score is not None:
                 tier = self._get_tier(true_score, q_id)
                 with open(tf, "r", encoding="utf-8") as f:
@@ -75,34 +71,64 @@ class GradeOptDataLoader:
                     if "[OCR Error]" in content or len(content) < 10:
                         print(f"⏭️ Skipping invalid OCR file: {tf.name}")
                         continue
-                    
-                    tier_buckets[tier].append({
+
+                    samples.append({
                         "id": student_id,
                         "text": content,
                         "true_score": true_score,
                         "tier": tier
                     })
 
-        D_train, D_val = [], []
+        return samples
 
-        if sample_ratio is not None:
-            sample_ratio = float(sample_ratio)
-            if not 0 < sample_ratio <= 1:
-                raise ValueError(f"sample_ratio must be in (0, 1] when set; got {sample_ratio}")
-            if sample_ratio < 1:
-                original_total = sum(len(tier_buckets[tier]) for tier in ["Low", "Mid", "High"])
-                for tier in ["Low", "Mid", "High"]:
-                    samples = tier_buckets[tier]
-                    if not samples:
-                        continue
-                    random.shuffle(samples)
-                    keep_count = max(1, int(round(len(samples) * sample_ratio)))
-                    tier_buckets[tier] = samples[:keep_count]
-                downsampled_total = sum(len(tier_buckets[tier]) for tier in ["Low", "Mid", "High"])
-                print(
-                    f"🐞 Debug sample ratio active: ratio={sample_ratio:.4f}, "
-                    f"usable={original_total}, downsampled={downsampled_total}"
-                )
+    def filter_samples(self, samples, sample_ratio=None):
+        """Apply pre-split filtering hooks to the flat loaded sample list."""
+        samples = list(samples)
+
+        if sample_ratio is None:
+            return samples
+
+        sample_ratio = float(sample_ratio)
+        if not 0 < sample_ratio <= 1:
+            raise ValueError(f"sample_ratio must be in (0, 1] when set; got {sample_ratio}")
+        if sample_ratio >= 1:
+            return samples
+
+        tier_buckets = self._bucket_samples_by_tier(samples)
+        original_total = sum(len(tier_buckets[tier]) for tier in ["Low", "Mid", "High"])
+        for tier in ["Low", "Mid", "High"]:
+            tier_samples = tier_buckets[tier]
+            if not tier_samples:
+                continue
+            random.shuffle(tier_samples)
+            keep_count = max(1, int(round(len(tier_samples) * sample_ratio)))
+            tier_buckets[tier] = tier_samples[:keep_count]
+
+        filtered_samples = []
+        for tier in ["Low", "Mid", "High"]:
+            filtered_samples.extend(tier_buckets[tier])
+
+        downsampled_total = len(filtered_samples)
+        print(
+            f"🐞 Debug sample ratio active: ratio={sample_ratio:.4f}, "
+            f"usable={original_total}, downsampled={downsampled_total}"
+        )
+        return filtered_samples
+
+    def _bucket_samples_by_tier(self, samples):
+        """Group flat samples by score tier."""
+        tier_buckets = defaultdict(list)
+        for sample in samples:
+            tier_buckets[sample.get("tier")].append(sample)
+        return tier_buckets
+
+    def split_balanced_samples(self, samples, train_size=None, val_size=None, val_ratio=0.25):
+        """
+        分层抽取平衡数据集。
+        train_size 和 val_size 建议设为 3 的倍数，以便各档位平分。
+        """
+        tier_buckets = self._bucket_samples_by_tier(samples)
+        D_train, D_val = [], []
 
         print(f"📊 数据池分布: Low={len(tier_buckets['Low'])}, Mid={len(tier_buckets['Mid'])}, High={len(tier_buckets['High'])}")
 
@@ -137,3 +163,16 @@ class GradeOptDataLoader:
             else:
                 raise ValueError("D_val 为空，无法进行 ASRO 验证。请增加数据量或调高 val_ratio。")
         return D_train, D_val
+
+    def get_balanced_splits(self, all_txt_dir, q_id="66", train_size=None, val_size=None, val_ratio=0.25, sample_ratio=None):
+        """
+        Backward-compatible pipeline wrapper for loading, filtering, and splitting.
+        """
+        samples = self.load_samples(all_txt_dir, q_id=q_id)
+        samples = self.filter_samples(samples, sample_ratio=sample_ratio)
+        return self.split_balanced_samples(
+            samples,
+            train_size=train_size,
+            val_size=val_size,
+            val_ratio=val_ratio,
+        )
