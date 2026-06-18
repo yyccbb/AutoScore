@@ -158,6 +158,22 @@ class ASROEngine:
         with open(llm_response_save_path, "w", encoding="utf-8") as f:
             json.dump(llm_response, f, ensure_ascii=False, indent=4)
 
+    def _print_sampler_debug_summary(self, round_idx: int, score_records: list, top_k: int = 5):
+        if not self.debug:
+            return
+
+        sorted_samples = sorted(score_records, key=lambda x: x["misconf"], reverse=True)
+        display_count = min(int(top_k), len(sorted_samples))
+
+        print(f"\n" + "="*70)
+        print(f"📈 [ROUND {round_idx} SAMPLER DEBUG]")
+        print(f"\n🔍 Top-{display_count} Highest-Misconf Training Samples:")
+        print(f"{'ID':>12} | {'True':>6} | {'Pred':>6} | {'Misconf':>10}")
+        for s in sorted_samples[:display_count]:
+            sample_id = str(s.get("id", "unknown"))
+            print(f"{sample_id:>12} | {s['true']:6.1f} | {s['pred']:6.1f} | {s['misconf']:10.2f}")
+        print("="*70 + "\n")
+
     def _process_single_mode(self, mode, p_current, scan_results, global_cm_str, round_idx=1):
         try:
             safe_mode = tuple(int(x) for x in mode)
@@ -327,6 +343,7 @@ class ASROEngine:
             log_progress("sampling", "minibatch sampling started", round=round_idx, train=len(D_train))
             minibatch, full_llm_response = self.sampler.sample_minibatch(D_train, current_guideline, self.client)
             self._save_intermediate_records(round_idx, D_train, full_llm_response, is_validation=False)
+            self._print_sampler_debug_summary(round_idx, full_llm_response)
             log_progress("sampling", "minibatch sampling finished", round=round_idx, minibatch=len(minibatch))
 
             scan_results = self.evaluate_minibatch_sequential(minibatch, current_guideline)
