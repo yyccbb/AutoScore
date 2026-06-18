@@ -81,10 +81,13 @@ class GradeOptDataLoader:
 
         return samples
 
-    def filter_samples(self, samples, sample_ratio=None):
-        """Apply pre-split filtering hooks to the flat loaded sample list."""
-        samples = list(samples)
+    def filter_samples(self, samples):
+        """Future hook for custom pre-split sample filtering/scanning."""
+        return list(samples)
 
+    def downsample_samples(self, samples, sample_ratio=None):
+        """Apply optional tier-balanced debug downsampling before splitting."""
+        samples = list(samples)
         if sample_ratio is None:
             return samples
 
@@ -169,7 +172,8 @@ class GradeOptDataLoader:
         Backward-compatible pipeline wrapper for loading, filtering, and splitting.
         """
         samples = self.load_samples(all_txt_dir, q_id=q_id)
-        samples = self.filter_samples(samples, sample_ratio=sample_ratio)
+        samples = self.filter_samples(samples)
+        samples = self.downsample_samples(samples, sample_ratio=sample_ratio)
         return self.split_balanced_samples(
             samples,
             train_size=train_size,
