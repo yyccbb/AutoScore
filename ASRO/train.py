@@ -167,6 +167,7 @@ def main():
     grader_max_tokens = cfg.get("grader_max_tokens")
     reflector_max_tokens = cfg.get("reflector_max_tokens")
     reflector_timeout = cfg.get("reflector_timeout")
+    debug = cfg.get("debug", False)
 
     log_progress(
         "startup",
@@ -180,6 +181,7 @@ def main():
         K=K,
         workers=max_workers,
         output_dir=output_dir,
+        debug=debug,
     )
 
     _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q)
@@ -221,6 +223,7 @@ def main():
         misconf_tier_weight=misconf_tier_weight,
         max_workers=max_workers,
         output_dir=output_dir,
+        debug=debug,
     )
 
     initial_G = _load_task_definition(json_path, dataset_name, target_q)

@@ -40,6 +40,7 @@ class ASROEngine:
         misconf_tier_weight=10.0,
         max_workers=1,
         output_dir=".",
+        debug=False,
     ):
         self.client = client
         self.T, self.B, self.K, self.Lambda = T, B, K, Lambda
@@ -48,6 +49,7 @@ class ASROEngine:
         self.misconf_tier_weight = float(misconf_tier_weight)
         self.max_workers = max(1, int(max_workers))
         self.output_dir = output_dir
+        self.debug = bool(debug)
         self.failed_results = []
 
         self.sampler = ASROSampler(
@@ -140,6 +142,9 @@ class ASROEngine:
             writer.writerow(metrics)
 
     def _save_intermediate_records(self, round_idx: int, dataset: list, llm_response: list, is_validation: bool):
+        if not self.debug:
+            return
+
         subdir_path = os.path.join(self.output_dir, f"rnd{round_idx}")
         os.makedirs(subdir_path, exist_ok=True)
 
