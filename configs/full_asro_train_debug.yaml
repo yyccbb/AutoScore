@@ -23,7 +23,8 @@ asro_train:
   reflector_temperature: 0.7
   grader_max_tokens: null
   reflector_max_tokens: null
-  debug: false # TODO: Change
+  debug: true # TODO: Change
+  debug_data_ratio: 0.5
   ocr: true
   ocr_before_train: true
   force_ocr: false # TODO: Change

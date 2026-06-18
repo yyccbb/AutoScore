@@ -44,7 +44,7 @@ class GradeOptDataLoader:
             return "Mid"
         return "High"
 
-    def get_balanced_splits(self, all_txt_dir, q_id="66", train_size=None, val_size=None, val_ratio=0.25):
+    def get_balanced_splits(self, all_txt_dir, q_id="66", train_size=None, val_size=None, val_ratio=0.25, sample_ratio=None):
         """
         分层抽取平衡数据集。
         train_size 和 val_size 建议设为 3 的倍数，以便各档位平分。
@@ -84,6 +84,25 @@ class GradeOptDataLoader:
                     })
 
         D_train, D_val = [], []
+
+        if sample_ratio is not None:
+            sample_ratio = float(sample_ratio)
+            if not 0 < sample_ratio <= 1:
+                raise ValueError(f"sample_ratio must be in (0, 1] when set; got {sample_ratio}")
+            if sample_ratio < 1:
+                original_total = sum(len(tier_buckets[tier]) for tier in ["Low", "Mid", "High"])
+                for tier in ["Low", "Mid", "High"]:
+                    samples = tier_buckets[tier]
+                    if not samples:
+                        continue
+                    random.shuffle(samples)
+                    keep_count = max(1, int(round(len(samples) * sample_ratio)))
+                    tier_buckets[tier] = samples[:keep_count]
+                downsampled_total = sum(len(tier_buckets[tier]) for tier in ["Low", "Mid", "High"])
+                print(
+                    f"🐞 Debug sample ratio active: ratio={sample_ratio:.4f}, "
+                    f"usable={original_total}, downsampled={downsampled_total}"
+                )
 
         print(f"📊 数据池分布: Low={len(tier_buckets['Low'])}, Mid={len(tier_buckets['Mid'])}, High={len(tier_buckets['High'])}")
 

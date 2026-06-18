@@ -159,8 +159,8 @@ def main():
     output_dir = cfg.get("output_dir", ".")
     api_key = cfg.get("api_key")
     base_url = cfg.get("base_url", "https://openrouter.ai/api/v1")
-    grader_model = cfg.get("grader_model", "qwen/qwen-2.5-72b-instruct")
-    reflector_model = cfg.get("reflector_model", "deepseek/deepseek-r1")
+    grader_model = cfg.get("grader_model", "deepseek/deepseek-v4-flash")
+    reflector_model = cfg.get("reflector_model", "deepseek/deepseek-v4-pro")
     client_timeout = cfg.get("client_timeout", 60.0)
     grader_temperature = cfg.get("grader_temperature", 0.0)
     reflector_temperature = cfg.get("reflector_temperature", 0.7)
@@ -168,6 +168,8 @@ def main():
     reflector_max_tokens = cfg.get("reflector_max_tokens")
     reflector_timeout = cfg.get("reflector_timeout")
     debug = cfg.get("debug", False)
+    debug_data_ratio = cfg.get("debug_data_ratio")
+    sample_ratio = debug_data_ratio if debug else None
 
     log_progress(
         "startup",
@@ -182,6 +184,7 @@ def main():
         workers=max_workers,
         output_dir=output_dir,
         debug=debug,
+        debug_data_ratio=sample_ratio,
     )
 
     _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q)
@@ -195,7 +198,8 @@ def main():
         q_id=target_q, 
         train_size=train_n, 
         val_size=val_n,
-        val_ratio=val_ratio
+        val_ratio=val_ratio,
+        sample_ratio=sample_ratio,
     )
     log_progress("data", "balanced splits ready", train=len(D_train), val=len(D_val))
 
