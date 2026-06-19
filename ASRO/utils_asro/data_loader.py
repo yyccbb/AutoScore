@@ -1,14 +1,36 @@
 import os
 import json
 import random
+import re
 from pathlib import Path
 from collections import defaultdict
 
+from utils_asro.progress import log_progress
+
 class GradeOptDataLoader:
-    def __init__(self, json_path, dataset_name="English_Grade12_004", max_score=15.0):
+    def __init__(
+        self,
+        json_path,
+        dataset_name="English_Grade12_004",
+        max_score=15.0,
+        sample_filter_enabled=False,
+        sample_filter_model=None,
+        api_key=None,
+        base_url="https://openrouter.ai/api/v1",
+        timeout=60.0,
+        max_workers=5,
+        task_context=None,
+    ):
         self.json_path = Path(json_path)
         self.dataset_name = dataset_name
         self.max_score = float(max_score)
+        self.sample_filter_enabled = bool(sample_filter_enabled)
+        self.sample_filter_model = sample_filter_model
+        self.api_key = api_key
+        self.base_url = base_url
+        self.timeout = timeout
+        self.max_workers = max(1, int(max_workers))
+        self.task_context = task_context or {}
         self.score_lookup = self._load_scores()
 
     def _load_scores(self):
@@ -81,9 +103,168 @@ class GradeOptDataLoader:
 
         return samples
 
+    def _strip_json_fences(self, text):
+        text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL).strip()
+        fenced = re.search(r"```json\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            return fenced.group(1).strip()
+        text = re.sub(r"```[a-zA-Z]*\s*", "", text)
+        return text.replace("```", "").strip()
+
+    def _first_json_object(self, text):
+        start = text.find("{")
+        if start < 0:
+            raise ValueError("No JSON object start found")
+
+        depth = 0
+        in_string = False
+        escape = False
+        for idx in range(start, len(text)):
+            char = text[idx]
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : idx + 1]
+
+        raise ValueError("No complete JSON object found")
+
+    def _parse_sample_filter_response(self, raw_response):
+        json_text = self._first_json_object(self._strip_json_fences(raw_response))
+        parsed = json.loads(json_text)
+        if not isinstance(parsed, dict):
+            raise ValueError("Sample filter response must be a JSON object")
+        return {
+            "blank": bool(parsed.get("blank", False)),
+            "irrelevant_high_score": bool(parsed.get("irrelevant_high_score", False)),
+            "reason": parsed.get("reason"),
+        }
+
     def filter_samples(self, samples):
-        """Future hook for custom pre-split sample filtering/scanning."""
-        return list(samples)
+        """Use an opt-in LLM scan to remove blank or irrelevant high-score samples."""
+        samples = list(samples)
+        if not samples:
+            return samples
+        if not self.sample_filter_model:
+            raise ValueError("sample_filter_model is required when sample filtering is enabled.")
+
+        try:
+            from utils.llm_api import call_llm_batch
+            from utils.prompts import SAMPLE_FILTER_SYSTEM_PROMPT, SAMPLE_FILTER_USER_TEMPLATE
+        except Exception as exc:
+            log_progress("sample_filter", "LLM sample filter unavailable; keeping all samples", error=exc)
+            return samples
+
+        question = self.task_context.get("Gqs", "")
+        rubric = self.task_context.get("Gsr", "")
+        high_score_cutoff = self.max_score * 0.5
+        request_items = []
+        for sample in samples:
+            user_prompt = SAMPLE_FILTER_USER_TEMPLATE.format(
+                question=question,
+                rubric=rubric,
+                essay_text=sample.get("text", ""),
+                sample_id=sample.get("id", "unknown"),
+                true_score=sample.get("true_score"),
+                max_score=self.max_score,
+                high_score_cutoff=high_score_cutoff,
+            )
+            request_items.append({
+                "model_name": self.sample_filter_model,
+                "system_prompt": SAMPLE_FILTER_SYSTEM_PROMPT,
+                "user_prompt": user_prompt,
+                "api_key": self.api_key,
+                "base_url": self.base_url,
+                "temperature": 0.0,
+                "timeout": self.timeout,
+                "extra_headers": {
+                    "HTTP-Referer": "https://ASRO-optimization.com",
+                    "X-Title": "ASRO Sample Filter",
+                },
+            })
+
+        log_progress("sample_filter", "LLM sample filter started", samples=len(samples), model=self.sample_filter_model)
+        try:
+            responses = call_llm_batch(request_items, max_workers=self.max_workers, use_multithread=self.max_workers > 1)
+        except Exception as exc:
+            log_progress("sample_filter", "LLM sample filter failed; keeping all samples", error=exc)
+            return samples
+        if len(responses) != len(samples):
+            log_progress(
+                "sample_filter",
+                "LLM sample filter returned unexpected response count; keeping all samples",
+                expected=len(samples),
+                actual=len(responses),
+            )
+            return samples
+
+        kept_samples = []
+        dropped_blank = 0
+        dropped_irrelevant = 0
+        parse_failures = 0
+        for sample, raw_response in zip(samples, responses):
+            try:
+                decision = self._parse_sample_filter_response(raw_response)
+            except Exception as exc:
+                parse_failures += 1
+                log_progress(
+                    "sample_filter",
+                    "sample filter JSON parse failed; keeping sample",
+                    sample_id=sample.get("id"),
+                    error=exc,
+                )
+                kept_samples.append(sample)
+                continue
+
+            blank = bool(decision["blank"])
+            irrelevant_high_score = bool(decision["irrelevant_high_score"])
+            if blank and irrelevant_high_score:
+                irrelevant_high_score = False
+
+            try:
+                true_score = float(sample.get("true_score", 0))
+            except (TypeError, ValueError):
+                true_score = 0.0
+            if true_score <= high_score_cutoff:
+                irrelevant_high_score = False
+
+            if blank:
+                dropped_blank += 1
+                log_progress("sample_filter", "dropping blank sample", sample_id=sample.get("id"), reason=decision.get("reason"))
+            elif irrelevant_high_score:
+                dropped_irrelevant += 1
+                log_progress(
+                    "sample_filter",
+                    "dropping irrelevant high-score sample",
+                    sample_id=sample.get("id"),
+                    score=true_score,
+                    reason=decision.get("reason"),
+                )
+            else:
+                kept_samples.append(sample)
+
+        log_progress(
+            "sample_filter",
+            "LLM sample filter finished",
+            input=len(samples),
+            kept=len(kept_samples),
+            dropped_blank=dropped_blank,
+            dropped_irrelevant_high_score=dropped_irrelevant,
+            parse_failures=parse_failures,
+        )
+        return kept_samples
 
     def downsample_samples(self, samples, sample_ratio=None):
         """Apply optional tier-balanced debug downsampling before splitting."""
@@ -172,7 +353,8 @@ class GradeOptDataLoader:
         Backward-compatible pipeline wrapper for loading, filtering, and splitting.
         """
         samples = self.load_samples(all_txt_dir, q_id=q_id)
-        samples = self.filter_samples(samples)
+        if self.sample_filter_enabled:
+            samples = self.filter_samples(samples)
         samples = self.downsample_samples(samples, sample_ratio=sample_ratio)
         return self.split_balanced_samples(
             samples,

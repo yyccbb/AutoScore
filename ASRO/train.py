@@ -170,6 +170,8 @@ def main():
     debug = cfg.get("debug", False)
     debug_data_ratio = cfg.get("debug_data_ratio")
     sample_ratio = debug_data_ratio if debug else None
+    sample_filter_enabled = cfg.get("sample_filter_enabled", False)
+    sample_filter_model = cfg.get("sample_filter_model", grader_model)
 
     log_progress(
         "startup",
@@ -185,12 +187,35 @@ def main():
         output_dir=output_dir,
         debug=debug,
         debug_data_ratio=sample_ratio,
+        sample_filter_enabled=sample_filter_enabled,
+        sample_filter_model=sample_filter_model,
     )
 
     _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q)
 
-    log_progress("data", "creating data loader", json_path=json_path, dataset=dataset_name)
-    loader = GradeOptDataLoader(json_path, dataset_name=dataset_name, max_score=max_score)
+    initial_G = _load_task_definition(json_path, dataset_name, target_q)
+    initial_G["max_score"] = max_score
+    initial_G["tier_count"] = tier_count
+
+    log_progress(
+        "data",
+        "creating data loader",
+        json_path=json_path,
+        dataset=dataset_name,
+        sample_filter_enabled=sample_filter_enabled
+    )
+    loader = GradeOptDataLoader(
+        json_path,
+        dataset_name=dataset_name,
+        max_score=max_score,
+        sample_filter_enabled=sample_filter_enabled,
+        sample_filter_model=sample_filter_model,
+        api_key=api_key,
+        base_url=base_url,
+        timeout=client_timeout,
+        max_workers=max_workers,
+        task_context=initial_G,
+    )
 
     log_progress("data", "building balanced train/val splits", data_dir=data_dir, target_q=target_q)
     D_train, D_val = loader.get_balanced_splits(
@@ -229,10 +254,6 @@ def main():
         output_dir=output_dir,
         debug=debug,
     )
-
-    initial_G = _load_task_definition(json_path, dataset_name, target_q)
-    initial_G["max_score"] = max_score
-    initial_G["tier_count"] = tier_count
 
     log_progress("optimization", "ASRO optimization started", rounds=T, train=len(D_train), val=len(D_val))
     best_g = engine.run_ASRO_optimization(D_train, D_val, initial_G) 

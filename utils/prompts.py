@@ -192,3 +192,47 @@ You are an expert English teacher. Please grade the following student essay base
   "total_score": X.X
 }}
 """
+
+
+SAMPLE_FILTER_SYSTEM_PROMPT = """
+You are a strict data quality reviewer for OCR-transcribed English writing exam responses.
+Your job is only to decide whether a loaded sample should be removed before model training.
+Output one valid JSON object only. Do not include markdown, comments, or extra text.
+"""
+
+SAMPLE_FILTER_USER_TEMPLATE = """
+### Writing Task
+{question}
+
+### Official Rubric
+{rubric}
+
+### Sample Metadata
+sample_id: {sample_id}
+human_score: {true_score}
+max_score: {max_score}
+irrelevant_high_score_cutoff: {high_score_cutoff}
+
+### OCR Student Response
+{essay_text}
+
+### Filtering Rules
+Set "blank" to true only when the OCR response contains no student-written content,
+or only fixed printed instructions/title text, or only copied leading words from a titleless
+situational writing task without meaningful student continuation.
+
+Set "irrelevant_high_score" to true only when both conditions hold:
+1. human_score is greater than irrelevant_high_score_cutoff.
+2. The response is clearly unrelated to the writing task/topic, so the high human score
+   appears mistaken.
+
+At most one of "blank" and "irrelevant_high_score" may be true. If neither condition is true,
+set both flags to false and set "reason" to null.
+
+Output a valid JSON object strictly matching:
+{{
+  "blank": boolean,
+  "irrelevant_high_score": boolean,
+  "reason": string or null
+}}
+"""

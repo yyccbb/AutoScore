@@ -16,6 +16,8 @@ asro_train:
   api_key: null
   base_url: https://openrouter.ai/api/v1
   grader_model: deepseek/deepseek-v4-flash
+  sample_filter_enabled: true # TODO: Change
+  sample_filter_model: deepseek/deepseek-v4-flash
   reflector_model: deepseek/deepseek-v4-pro
   client_timeout: 60.0
   reflector_timeout: 180.0
@@ -24,7 +26,7 @@ asro_train:
   grader_max_tokens: null
   reflector_max_tokens: null
   debug: true # TODO: Change
-  debug_data_ratio: 0.5
+  debug_data_ratio: null # TODO: Change
   ocr: true
   ocr_before_train: true
   force_ocr: false # TODO: Change
