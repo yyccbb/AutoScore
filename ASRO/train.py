@@ -96,7 +96,6 @@ def _load_task_definition(json_path, dataset_name, target_q):
     log_progress("guideline", "loading task definition", dataset=dataset_name, target_q=target_q)
     fallback = {
         "Gqs": "",
-        "Gkc": "",
         "Gsr": "",
         "Gar": "",
     }

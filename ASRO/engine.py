@@ -135,11 +135,48 @@ class ASROEngine:
 
         csv_path = os.path.join(self.output_dir, "metrics.csv")
         file_exists = os.path.exists(csv_path)
+        csv_metrics = {
+            key: json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value
+            for key, value in metrics.items()
+        }
         with open(csv_path, "a", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(metrics.keys()))
+            writer = csv.DictWriter(f, fieldnames=list(csv_metrics.keys()))
             if not file_exists:
                 writer.writeheader()
-            writer.writerow(metrics)
+            writer.writerow(csv_metrics)
+
+    def _format_error_modes(self, results, modes=None, limit=None):
+        mode_filter = None
+        if modes is not None:
+            mode_filter = {tuple(int(x) for x in mode) for mode in modes}
+
+        grouped = {}
+        for result in results:
+            true_idx = int(round(float(result["true"]) * 2))
+            pred_idx = int(round(float(result["pred"]) * 2))
+            if true_idx == pred_idx:
+                continue
+
+            mode = (true_idx, pred_idx)
+            if mode_filter is not None and mode not in mode_filter:
+                continue
+
+            item = grouped.setdefault(mode, {"total_misconf": 0.0, "sample_ids": []})
+            item["total_misconf"] += float(result["misconf"])
+            item["sample_ids"].append(str(result.get("id", "unknown")))
+
+        formatted = [
+            {
+                "mode": [int(mode[0]), int(mode[1])],
+                "total_misconf": float(values["total_misconf"]),
+                "sample_ids": values["sample_ids"],
+            }
+            for mode, values in grouped.items()
+        ]
+        formatted.sort(key=lambda item: item["total_misconf"], reverse=True)
+        if limit is not None:
+            formatted = formatted[: int(limit)]
+        return formatted
 
     def _save_intermediate_records(self, round_idx: int, dataset: list, llm_response: list, is_validation: bool):
         if not self.debug:
@@ -365,7 +402,8 @@ class ASROEngine:
                     **summary,
                     "accepted": False,
                     "temperature": float(temperature),
-                    "target_modes": "",
+                    "target_modes": [],
+                    "val_error_modes": [],
                     "failed_count": int(minibatch_failed_count),
                 }
                 self._save_round_metrics(metrics)
@@ -424,7 +462,8 @@ class ASROEngine:
                 **summary,
                 "accepted": bool(accept_new),
                 "temperature": float(temperature),
-                "target_modes": json.dumps([list(mode) for mode in error_modes]),
+                "target_modes": self._format_error_modes(scan_results, modes=error_modes),
+                "val_error_modes": self._format_error_modes(validation_results, limit=5),
                 "failed_count": int(minibatch_failed_count + validation_failed_count + len(optimizer_failed_results)),
             }
             self._save_round_metrics(metrics)
