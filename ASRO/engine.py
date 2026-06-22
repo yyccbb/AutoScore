@@ -178,7 +178,7 @@ class ASROEngine:
         try:
             safe_mode = tuple(int(x) for x in mode)
             e_ij = [r for r in scan_results if self._is_mode(r, safe_mode)]
-            e_plus_i, e_plus_j = self._get_contrastive_examples(scan_results, safe_mode)
+            e_plus_i, e_plus_j = self._get_contrastive_examples(scan_results, safe_mode) # Issue: both are empty
             log_progress(
                 "mode",
                 "mode repair started",
