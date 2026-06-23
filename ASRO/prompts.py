@@ -25,30 +25,31 @@
 
 GRADER_PROMPT_TEMPLATE = """
 [GRADING TASK: MARKER-BASED PROTOCOL]
-Goal: Evaluate the essay into the correct Tier and Score using the provided guidelines.
+Goal: Evaluate the student's essay and assign the correct Tier and Score according to the provided guidelines.
 
 [CONTEXT]
 1. Question (Gqs): {Gqs}
-2. Scoring Rubrics (Gsr): {Gsr}
-3. Adaptation Rules (Gar): {Gar} (⚠️ Priority: HIGHEST)
+2. Scoring Rubric (Gsr): {Gsr}
+3. Adaptation Rules (Gar): {Gar} (⚠️ HIGHEST priority)
 
 [STUDENT ESSAY]
 "{text}"
 
 [OUTPUT INSTRUCTIONS]
-You MUST output your evaluation using the following tags. 
-Place [[SCORE]] and [[TIER]] at the VERY BEGINNING.
-Be concise. Do not use JSON.
+You MUST output your evaluation using the tags below. 
+Place [[SCORE]] and [[TIER]] at the VERY BEGINNING of your response.
+Be concise.
+Do not output JSON.
 
 [REQUIRED OUTPUT FORMAT]
-[[SCORE]]: <0-{max_score} 之间的数值>
-[[TIER]]: <1-{tier_count} 之间的档次数字>
+[[SCORE]]: <integer between 0 and {max_score}>
+[[TIER]]: <0 if the score is 0; otherwise, an integer between 1 and {tier_count} according to the tiering rules>
 [[CONTENT_EVIDENCE]]: 
-- p1: <evidence or 'missing'>
-- p2: <evidence or 'missing'>
-- p3: <evidence or 'missing'>
-[[JUSTIFICATION]]: <简短说明：字数、细节质量、为什么是这个档次>
-[[BOUNDARY_CHECK]]: <为什么不往上/往下跳一档？>
+- p1: <supporting evidence from the essay, or "missing">
+- p2: <supporting evidence from the essay, or "missing">
+- Add additional points as needed.
+[[JUSTIFICATION]]: <Brief explanation: discuss the essay's length, quality of details, and why it belongs in this tier.>
+[[BOUNDARY_CHECK]]: <Explain why the essay does not qualify for the next higher tier and why it is not placed in the next lower tier.>
 """
 
 # ==========================================
