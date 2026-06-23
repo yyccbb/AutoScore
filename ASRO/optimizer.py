@@ -222,16 +222,16 @@ class GradeOptimizer:
         )
         raise error
 
-    def _format_ASRO_examples(self, examples, label, max_len=400):
+    def _format_ASRO_examples(self, examples, label):
         rendered = ""
         for idx, example in enumerate(examples):
-            text = example.get("text", "")[:max_len]
+            text = example.get("text", "")
             true_score = example.get("true", example.get("true_score", "N/A"))
             pred_score = example.get("pred", "N/A")
             reason = example.get("reasoning", "No reasoning provided")
 
             rendered += f"[{label} Case {idx + 1}]\n"
-            rendered += f"Content: {text}...\n"
+            rendered += f"Content: {text}\n"
             rendered += f"Target: {true_score} | AI Result: {pred_score}\n"
             rendered += f"AI Reasoning: {reason}\n"
             rendered += "-" * 20 + "\n"

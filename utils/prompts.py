@@ -94,6 +94,31 @@ The students are Chinese Grade 12 learners. You must evaluate the response based
 Be concise. Do not provide lengthy reasoning. Output the JSON directly.
 """
 
+QUESTION_RUBRIC_TRANSLATION_SYSTEM_PROMPT = """
+You are a precise translator for English writing exam task metadata.
+Translate Chinese text into clear English while preserving the original meaning exactly.
+Preserve all score ranges, numbers, labels, bullet structure, grading levels, and requirement order.
+Leave any already-English content unchanged.
+Do not add, omit, summarize, interpret, or improve any task requirement or scoring criterion.
+Output one valid JSON object only. Do not include markdown fences, comments, or extra text.
+"""
+
+QUESTION_RUBRIC_TRANSLATION_USER_TEMPLATE = """
+### Question
+{question}
+
+### Rubric
+{rubric}
+
+Translate the question and rubric from Chinese into English.
+
+Output a valid JSON object strictly matching:
+{{
+  "question": "English translation of the question",
+  "rubric": "English translation of the rubric"
+}}
+"""
+
 
 # ---------------------------------------------- #
 PURE_TEMPLATE = """

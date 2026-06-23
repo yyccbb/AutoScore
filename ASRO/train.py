@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import yaml
 
@@ -17,6 +18,7 @@ from utils_asro.data_loader import GradeOptDataLoader
 from utils_asro.progress import log_progress
 from engine import ASROEngine
 from client import GradeOptClient
+import utils.prompts as shared_prompts
 
 def load_yaml_config(config_path, section):
     path = Path(config_path)
@@ -38,6 +40,61 @@ def _first_present_config(cfg, *keys):
         if value is not None:
             return value
     return None
+
+
+def _stringify_task_field(value):
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _strip_json_fences(text):
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL).strip()
+    fenced = re.search(r"```json\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+    text = re.sub(r"```[a-zA-Z]*\s*", "", text)
+    return text.replace("```", "").strip()
+
+
+def _parse_translation_response(raw_response, require_question=True):
+    text = _strip_json_fences(raw_response)
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("No JSON object found in translation response")
+    parsed, _ = json.JSONDecoder().raw_decode(text[start:])
+    if not isinstance(parsed, dict):
+        raise ValueError("Translation response must be a JSON object")
+    if "question" not in parsed:
+        raise ValueError("Translation response missing required key: question")
+    if "rubric" not in parsed:
+        raise ValueError("Translation response missing required key: rubric")
+    question = parsed.get("question")
+    rubric = parsed.get("rubric")
+    if not isinstance(question, str):
+        raise ValueError("Translation response key must be a string: question")
+    if require_question and not question.strip():
+        raise ValueError("Translation response key must be non-empty: question")
+    if not isinstance(rubric, str) or not rubric.strip():
+        raise ValueError("Translation response missing non-empty string key: rubric")
+    return question.strip(), rubric.strip()
+
+
+def _translate_question_rubric(question, rubric, translation_client):
+    if translation_client is None:
+        raise ValueError("translation_client is required when translate_question_rubric is enabled")
+    prompt = shared_prompts.QUESTION_RUBRIC_TRANSLATION_USER_TEMPLATE.format(
+        question=question,
+        rubric=rubric,
+    )
+    log_progress("guideline", "translating question and rubric", model=getattr(translation_client, "model_reflector", None))
+    raw_response = translation_client.call_llm(
+        f"{shared_prompts.QUESTION_RUBRIC_TRANSLATION_SYSTEM_PROMPT}\n\n{prompt}".strip(),
+        is_reflector=True,
+    )
+    return _parse_translation_response(raw_response, require_question=bool(question.strip()))
 
 
 def _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q):
@@ -89,11 +146,17 @@ def _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q):
         )
 
 
-def _load_task_definition(json_path, dataset_name, target_q):
+def _load_task_definition(json_path, dataset_name, target_q, translate_question_rubric=False, translation_client=None):
     """
         Prepares the initial G (question + grading rubrics + new rules, left empty for now)
     """
-    log_progress("guideline", "loading task definition", dataset=dataset_name, target_q=target_q)
+    log_progress(
+        "guideline",
+        "loading task definition",
+        dataset=dataset_name,
+        target_q=target_q,
+        translate_question_rubric=translate_question_rubric,
+    )
     fallback = {
         "Gqs": "",
         "Gsr": "",
@@ -114,14 +177,25 @@ def _load_task_definition(json_path, dataset_name, target_q):
             rubric = qinfo.get("rubric")
 
             if question:
-                fallback["Gqs"] = question if isinstance(question, str) else json.dumps(question, ensure_ascii=False, indent=2)
+                fallback["Gqs"] = _stringify_task_field(question)
             if rubric:
-                fallback["Gsr"] = rubric if isinstance(rubric, str) else json.dumps(rubric, ensure_ascii=False, indent=2)
+                fallback["Gsr"] = _stringify_task_field(rubric)
             if not fallback["Gsr"]:
                 raise ValueError(
                     f"Missing rubric for {dataset_name}/{target_q}. "
                     "ASRO training requires dataset.json subjective_question[qid].rubric."
                 )
+            if translate_question_rubric:
+                try:
+                    fallback["Gqs"], fallback["Gsr"] = _translate_question_rubric(
+                        fallback["Gqs"],
+                        fallback["Gsr"],
+                        translation_client,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to translate question/rubric for {dataset_name}/{target_q}"
+                    ) from exc
             return fallback
     raise ValueError(
         f"Missing subjective_question entry for {dataset_name}/{target_q}. "
@@ -171,6 +245,7 @@ def main():
     sample_ratio = debug_data_ratio if debug else None
     sample_filter_enabled = cfg.get("sample_filter_enabled", False)
     sample_filter_model = cfg.get("sample_filter_model", grader_model)
+    translate_question_rubric = cfg.get("translate_question_rubric", False)
 
     log_progress(
         "startup",
@@ -188,11 +263,32 @@ def main():
         debug_data_ratio=sample_ratio,
         sample_filter_enabled=sample_filter_enabled,
         sample_filter_model=sample_filter_model,
+        translate_question_rubric=translate_question_rubric,
     )
 
     _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q)
 
-    initial_G = _load_task_definition(json_path, dataset_name, target_q)
+    log_progress("client", "creating ASRO client", grader_model=grader_model, reflector_model=reflector_model)
+    client = GradeOptClient(
+        api_key=api_key,
+        base_url=base_url,
+        grader_model=grader_model,
+        reflector_model=reflector_model,
+        timeout=client_timeout,
+        grader_temperature=grader_temperature,
+        reflector_temperature=reflector_temperature,
+        grader_max_tokens=grader_max_tokens,
+        reflector_max_tokens=reflector_max_tokens,
+        reflector_timeout=reflector_timeout,
+    )
+
+    initial_G = _load_task_definition(
+        json_path,
+        dataset_name,
+        target_q,
+        translate_question_rubric=translate_question_rubric,
+        translation_client=client,
+    )
     initial_G["max_score"] = max_score
     initial_G["tier_count"] = tier_count
 
@@ -227,19 +323,6 @@ def main():
     )
     log_progress("data", "balanced splits ready", train=len(D_train), val=len(D_val))
 
-    log_progress("client", "creating ASRO client", grader_model=grader_model, reflector_model=reflector_model)
-    client = GradeOptClient(
-        api_key=api_key,
-        base_url=base_url,
-        grader_model=grader_model,
-        reflector_model=reflector_model,
-        timeout=client_timeout,
-        grader_temperature=grader_temperature,
-        reflector_temperature=reflector_temperature,
-        grader_max_tokens=grader_max_tokens,
-        reflector_max_tokens=reflector_max_tokens,
-        reflector_timeout=reflector_timeout,
-    ) 
     log_progress("engine", "creating ASRO engine", T=T, B=B, K=K, workers=max_workers)
     engine = ASROEngine(
         client,
