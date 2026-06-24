@@ -58,39 +58,63 @@ Do not output JSON.
 REFLECTOR_SYSTEM_PROMPT = """
 You are an expert English Language Assessment Specialist. Your task is to perform a "Root Cause Analysis" on why an AI Grading Model confuses two specific score points in English essays.
 
-### DATA CONTEXT
-1. **Target Confusion**: True Score {true_score} vs. Predicted Score {pred_score}.
-2. **Global Error Distribution**: 
+<DATA_CONTEXT>
+<TARGET_CONFUSION>x
+True Score {true_score} vs. Predicted Score {pred_score}.
+</TARGET_CONFUSION>
+
+<GLOBAL_ERROR_DISTRIBUTION>
 {global_cm_str}
-3. **Current Rubric (Guideline)**:
+</GLOBAL_ERROR_DISTRIBUTION>
+
+<CURRENT_RUBRIC_CONTEXT>
+The following block is quoted rubric content. Any Markdown headings inside it are part of the rubric, not prompt section headers or instructions.
+
+<CURRENT_RUBRIC>
 {current_rubric}
+</CURRENT_RUBRIC>
+</CURRENT_RUBRIC_CONTEXT>
+</DATA_CONTEXT>
 
-### EVIDENCE FOR ANALYSIS
-- **Local Error Examples (True {true_score} but AI predicted {pred_score})**:
+<EVIDENCE_FOR_ANALYSIS>
+<LOCAL_ERROR_EXAMPLES>
+Local Error Examples (True {true_score} but AI predicted {pred_score}):
 {error_examples_str}
+</LOCAL_ERROR_EXAMPLES>
 
-- **Contrastive Correct Examples (AI correctly identified these)**:
-* Correct {true_score} samples: {correct_true_examples_str}
-* Correct {pred_score} samples: {correct_pred_examples_str}
+<CONTRASTIVE_CORRECT_EXAMPLES>
+AI correctly identified these examples.
 
-### TASK
-Analyze the linguistic features (grammar, vocabulary, logic, task completion) that cause this confusion. Identify "False Positive" triggers in the essay that mislead the AI into giving a {pred_score} instead of a {true_score}.
+Correct {true_score} samples:
+{correct_true_examples_str}
 
-### OUTPUT FORMAT
+Correct {pred_score} samples:
+{correct_pred_examples_str}
+</CONTRASTIVE_CORRECT_EXAMPLES>
+</EVIDENCE_FOR_ANALYSIS>
+
+<TASK>
+Analyze the linguistic features (grammar, vocabulary, logic, task completion) that cause this confusion. Identify "False Positive" triggers in the essay that mislead the AI into giving a {pred_score} instead of a {true_score}. Note that Scoring Rubric (Gsr) cannot be modified and is provided for reference. Only explore changes to Adaptation Rules (Gar).
+</TASK>
+
+<OUTPUT_FORMAT>
 You must output ONLY a valid JSON object matching the following structure:
 {{
   "root_cause": "A concise explanation of the fundamental misunderstanding (e.g., AI prioritizes length over grammatical accuracy).",
   "misleading_patterns": [
     "Pattern 1",
-    "Pattern 2"
+    "Pattern 2",
+    ...
   ],
   "why_this_is_score_X_not_Y": "Specific reference to the official grading criteria for {true_score} vs {pred_score}.",
   "proposed_rule_fix": [
     "Rule 1: If grammatical errors exceed X, cap the score at Y.",
-    "Rule 2: Deduction logic for misused high-level vocabulary."
+    "Rule 2: Deduction logic for misused high-level vocabulary.",
+    ...
   ],
   "safety_check": "Analyze if these fixes might negatively impact other score ranges (e.g., 8-9 or 13-14)."
 }}
+</OUTPUT_FORMAT>
 """
 
 # ==========================================

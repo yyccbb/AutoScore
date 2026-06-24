@@ -27,6 +27,29 @@ class GradeOptimizer:
         payload = {k: v for k, v in payload.items() if k != "is_reflector"}
         return call_llm(system_prompt, user_prompt, **payload)
 
+    def _format_reflector_rubric_context(self, guideline):
+        def normalize(value):
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value.strip()
+            try:
+                return json.dumps(value, indent=2, ensure_ascii=False).strip()
+            except TypeError:
+                return str(value).strip()
+
+        guideline = guideline or {}
+        gsr = normalize(guideline.get("Gsr"))
+        gar = normalize(guideline.get("Gar"))
+        sections = []
+
+        if gsr:
+            sections.append(f"## Scoring Rubric (Gsr)\n{gsr}")
+        if gar:
+            sections.append(f"## Adaptation Rules (Gar)\n{gar}")
+
+        return "\n\n".join(sections) or "No guideline provided"
+
     def reflector_step(self, g_k, mode_errors, contrastive_data, mode_pair, global_cm_str, curr_round=1, **payload):
         t_score = mode_pair[0] / 2.0
         p_score = mode_pair[1] / 2.0
@@ -34,6 +57,10 @@ class GradeOptimizer:
         error_details = self._format_ASRO_examples(mode_errors[:3], "Error")
         c_true_str = self._format_ASRO_examples(contrastive_data["target_true_examples"][:2], "Correct_True")
         c_pred_str = self._format_ASRO_examples(contrastive_data["target_pred_examples"][:2], "Correct_Pred")
+        if not c_true_str.strip():
+            c_true_str = "No true examples."
+        if not c_pred_str.strip():
+            c_pred_str = "No predicted examples."
 
         from prompts import REFLECTOR_SYSTEM_PROMPT
 
@@ -41,7 +68,7 @@ class GradeOptimizer:
             true_score=t_score,
             pred_score=p_score,
             global_cm_str=global_cm_str,
-            current_rubric=g_k.get("Gar", "No guideline provided"),
+            current_rubric=self._format_reflector_rubric_context(g_k),
             error_examples_str=error_details,
             correct_true_examples_str=c_true_str,
             correct_pred_examples_str=c_pred_str,
