@@ -3,6 +3,29 @@ import re
 
 from utils_asro.progress import log_progress
 
+GRADER_TAG_RENDER_ORDER = (
+    "SCORE",
+    "TIER",
+    "CORRECTED_MEANING",
+    "TASK_REQUIREMENTS",
+    "CONTENT_JUDGMENT",
+    "LANGUAGE_JUDGMENT",
+    "COHERENCE_JUDGMENT",
+    "GAR_APPLICATION",
+    "REASONING",
+    "BOUNDARY_CHECK",
+)
+
+ASRO_EXAMPLE_METADATA_KEYS = {
+    "id",
+    "text",
+    "true",
+    "true_score",
+    "pred",
+    "misconf",
+    "prob",
+}
+
 
 class OptimizerStepError(RuntimeError):
     def __init__(self, message, stage=None, mode_pair=None, raw_response=None):
@@ -255,12 +278,35 @@ class GradeOptimizer:
             text = example.get("text", "")
             true_score = example.get("true", example.get("true_score", "N/A"))
             pred_score = example.get("pred", "N/A")
-            reason = example.get("reasoning", "No reasoning provided")
+            tag_names = [
+                tag_name
+                for tag_name in GRADER_TAG_RENDER_ORDER
+                if tag_name in example
+            ]
+            extra_tag_names = sorted(
+                key
+                for key in example
+                if key not in ASRO_EXAMPLE_METADATA_KEYS
+                and key not in GRADER_TAG_RENDER_ORDER
+                and key.upper() == key
+            )
+            tag_names.extend(extra_tag_names)
 
             rendered += f"[{label} Case {idx + 1}]\n"
-            rendered += f"Content: {text}\n"
-            rendered += f"Target: {true_score} | AI Result: {pred_score}\n"
-            rendered += f"AI Reasoning: {reason}\n"
+            rendered += f"Student Response: {text}\n"
+            rendered += f"Human Score: {true_score} | AI Grader Score: {pred_score}\n"
+            if tag_names:
+                for tag_name in tag_names:
+                    value = str(example.get(tag_name, "")).strip()
+                    label_text = f"AI Grader False Prediction - {tag_name}"
+                    if "\n" in value:
+                        rendered += f"{label_text}:\n{value}\n"
+                    else:
+                        rendered += f"{label_text}: {value}\n"
+            elif "reasoning" in example:
+                rendered += f"AI Grader False Prediction - REASONING: {example.get('reasoning')}\n"
+            else:
+                rendered += "AI Grader False Prediction - REASONING: No parsed grader tags provided\n"
             rendered += "-" * 20 + "\n"
         return rendered
 

@@ -81,6 +81,11 @@ class ASROEngine:
             raise ValueError(f"Predicted score for {sample_id} is out of range [0, {self.max_score}]: {score}")
         return score
 
+    def _flatten_grader_tags(self, grader_tags):
+        if isinstance(grader_tags, dict):
+            return dict(grader_tags)
+        return {"REASONING": str(grader_tags)}
+
     def _failed_result(self, sample, exc, stage):
         return {
             "id": sample.get("id", "unknown") if isinstance(sample, dict) else "unknown",
@@ -268,7 +273,7 @@ class ASROEngine:
         return cohen_kappa_score(y_true, y_pred, weights="quadratic")
 
     def _evaluate_sample(self, sample, guideline):
-        score, _, _, reasoning = self.client.get_ordinal_score(sample["text"], guideline, sample["true_score"])
+        score, _, _, grader_tags = self.client.get_ordinal_score(sample["text"], guideline, sample["true_score"])
         score = self._coerce_valid_score(score, sample.get("id", "unknown"))
 
         true_score = float(sample["true_score"])
@@ -282,11 +287,11 @@ class ASROEngine:
             "pred": score,
             "misconf": misconf,
             "text": sample["text"],
-            "reasoning": reasoning,
+            **self._flatten_grader_tags(grader_tags),
         }
 
     def _validate_sample(self, sample, guideline):
-        score, _, _, reasoning = self.client.get_ordinal_score(sample["text"], guideline, sample["true_score"])
+        score, _, _, grader_tags = self.client.get_ordinal_score(sample["text"], guideline, sample["true_score"])
         score = self._coerce_valid_score(score, sample.get("id", "unknown"))
 
         true_score = float(sample["true_score"])
@@ -299,7 +304,7 @@ class ASROEngine:
             "true": true_score,
             "pred": score,
             "misconf": misconf,
-            "reasoning": reasoning,
+            **self._flatten_grader_tags(grader_tags),
         }
 
     def _evaluate_collection(self, samples, guideline, worker_fn, desc, stage):

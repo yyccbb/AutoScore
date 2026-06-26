@@ -10,6 +10,11 @@ class ASROEvaluator:
         self.tier_count = int(tier_count)
         self.misconf_tier_weight = float(misconf_tier_weight)
 
+    def _flatten_grader_tags(self, grader_tags):
+        if isinstance(grader_tags, dict):
+            return dict(grader_tags)
+        return {"REASONING": str(grader_tags)}
+
     def calculate_kappa(self, guideline, dataset):
         y_true, y_pred = [], []
         for sample in dataset:
@@ -21,7 +26,7 @@ class ASROEvaluator:
     def evaluate_minibatch(self, minibatch, guideline):
         results = []
         for sample in minibatch:
-            pred_score, lp_pred, lp_true, reasoning = self.client.get_ordinal_score(
+            pred_score, lp_pred, lp_true, grader_tags = self.client.get_ordinal_score(
                 sample['text'], guideline, sample['true_score']
             )
             is_correct = (int(round(pred_score * 2)) == int(round(sample['true_score'] * 2)))
@@ -36,7 +41,7 @@ class ASROEvaluator:
             results.append({
                 "true": sample['true_score'], "pred": pred_score,
                 "prob": np.exp(lp_pred), "misconf": m_val,
-                "text": sample['text'], "reasoning": reasoning
+                "text": sample['text'], **self._flatten_grader_tags(grader_tags)
             })
         return results
 

@@ -196,6 +196,50 @@ def npx_converter(obj):
         return obj.tolist()
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
+
+GRADER_TAG_RENDER_ORDER = (
+    "SCORE",
+    "TIER",
+    "CORRECTED_MEANING",
+    "TASK_REQUIREMENTS",
+    "CONTENT_JUDGMENT",
+    "LANGUAGE_JUDGMENT",
+    "COHERENCE_JUDGMENT",
+    "GAR_APPLICATION",
+    "REASONING",
+    "BOUNDARY_CHECK",
+)
+
+GRADER_LOG_METADATA_KEYS = {
+    "id",
+    "text",
+    "true",
+    "true_score",
+    "pred",
+    "misconf",
+    "prob",
+}
+
+
+def format_grader_tags_for_log(sample):
+    tag_names = [tag for tag in GRADER_TAG_RENDER_ORDER if tag in sample]
+    tag_names.extend(
+        sorted(
+            key
+            for key in sample
+            if key not in GRADER_LOG_METADATA_KEYS
+            and key not in GRADER_TAG_RENDER_ORDER
+            and key.upper() == key
+        )
+    )
+    if tag_names:
+        chunks = []
+        for tag_name in tag_names:
+            chunks.append(f"{tag_name}:\n{str(sample.get(tag_name, '')).strip()}")
+        return "\n\n".join(chunks).strip()
+    return str(sample.get("reasoning", "No parsed grader tags provided"))
+
+
 def save_guideline(guideline, round_idx, qwk_score, is_best=False):
     save_dir = "optimized_guidelines"
     os.makedirs(save_dir, exist_ok=True)
@@ -226,7 +270,7 @@ def save_error_logs(results, round_idx, top_n=10):
             f.write(f"- **ID:** `{s['id']}`\n") 
             f.write(f"- **True:** {s['true']} | **Pred:** {s['pred']}\n")
             f.write(f"### Essay:\n> {s['text']}\n\n")
-            f.write(f"### Reasoning:\n```text\n{s['reasoning']}\n```\n")
+            f.write(f"### Grader Tags:\n```text\n{format_grader_tags_for_log(s)}\n```\n")
             f.write(f"\n---\n")
             
     print(f"[OK] Bad cases saved to {file_path}")

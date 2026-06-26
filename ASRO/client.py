@@ -100,10 +100,10 @@ class GradeOptClient:
     def get_ordinal_score(self, essay_text, guideline, true_score=None):
         user_prompt = self._build_grader_prompt(essay_text, guideline)
         content = self.call_llm(user_prompt, is_reflector=False)
-        score, reasoning = self._parse_marker_response(content)
-        max_score = float(guideline.get("max_score", 15))
-        score = min(max_score, max(0.0, float(score)))
-        return score, -1.0, -1.0, reasoning
+        max_score = guideline.get("max_score", 15)
+        tier_count = guideline.get("tier_count", 5)
+        score, grader_tags = self._parse_marker_response(content, max_score=max_score, tier_count=tier_count)
+        return float(score), -1.0, -1.0, grader_tags
 
     def get_ordinal_score_batch(self, samples, guideline, max_workers=5, use_multithread=True):
         log_progress(
@@ -138,11 +138,11 @@ class GradeOptClient:
         )
         log_progress("llm_batch", "grader batch responses received", samples=len(contents), model=self.grader_model)
         results = []
-        max_score = float(guideline.get("max_score", 15))
+        max_score = guideline.get("max_score", 15)
+        tier_count = guideline.get("tier_count", 5)
         for content in contents:
-            score, reasoning = self._parse_marker_response(content)
-            score = min(max_score, max(0.0, float(score)))
-            results.append((score, -1.0, -1.0, reasoning))
+            score, grader_tags = self._parse_marker_response(content, max_score=max_score, tier_count=tier_count)
+            results.append((float(score), -1.0, -1.0, grader_tags))
         log_progress("llm_batch", "grader batch parsed", samples=len(results), model=self.grader_model)
         return results
 
@@ -164,31 +164,71 @@ class GradeOptClient:
             pass
         return text
 
-    def _parse_marker_response(self, content):
+    def _normalize_tag_name(self, tag_name):
+        normalized = re.sub(r"[^A-Za-z0-9]+", "_", tag_name or "").strip("_").upper()
+        if not normalized:
+            raise ValueError(f"Invalid empty marker tag name: {tag_name!r}")
+        return normalized
+
+    def _parse_marker_tags(self, content):
         if not content:
-            return 0.0, "API Call Failed"
-
+            raise ValueError("Empty grader response")
         text = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-        score_pattern = r"(?:\[*SCORE\]*|分数)\s*[:：]\s*(\d+(?:\.\d+)?)"
-        score_match = re.search(score_pattern, text, re.IGNORECASE)
+        marker_pattern = re.compile(
+            r"^[ \t]*\[\[\s*([A-Za-z][A-Za-z0-9_ -]*)\s*\]\]\s*[:：][ \t]*",
+            re.MULTILINE,
+        )
+        matches = list(marker_pattern.finditer(text))
+        if not matches:
+            raise ValueError("No marker tags found in grader response")
 
-        if score_match:
-            score = float(score_match.group(1))
-        else:
-            first_num = re.search(r"(\d+(?:\.\d+)?)", text)
-            score = float(first_num.group(1)) if first_num else 0.0
+        tags = {}
+        for idx, match in enumerate(matches):
+            tag_name = self._normalize_tag_name(match.group(1))
+            value_start = match.end()
+            value_end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            value = text[value_start:value_end].strip()
 
-        tags = [r"\[*REASONING\]*", r"\[*CONTENT_EVIDENCE\]*", r"理由", r"依据"]
-        combined_pattern = rf"(?:{'|'.join(tags)})\s*[:：]\s*(.*)"
-        reason_match = re.search(combined_pattern, text, re.DOTALL | re.IGNORECASE)
-        if reason_match:
-            reasoning = reason_match.group(1).strip()
-        else:
-            parts = re.split(score_pattern, text, flags=re.IGNORECASE)
-            reasoning = parts[-1].strip() if len(parts) > 1 else text[-100:]
+            if tag_name in ("SCORE", "TIER") and tag_name in tags:
+                raise ValueError(f"Duplicate numeric grader tag: {tag_name}")
+            if tag_name in tags:
+                tags[tag_name] = f"{tags[tag_name]}\n\n{value}".strip()
+            else:
+                tags[tag_name] = value
+        return tags
 
-        reasoning = re.sub(r"\[*TIER\]*\s*[:：]\s*\d+", "", reasoning, flags=re.IGNORECASE).strip()
-        return score, reasoning
+    def _parse_required_int_tag(self, tags, tag_name, min_value, max_value):
+        if tag_name not in tags:
+            raise ValueError(f"Missing required grader tag: {tag_name}")
+
+        raw_value = str(tags[tag_name]).strip()
+        if not re.fullmatch(r"\d+", raw_value):
+            raise ValueError(f"{tag_name} must be an integer, got: {raw_value!r}")
+
+        value = int(raw_value)
+        if not min_value <= value <= max_value:
+            raise ValueError(f"{tag_name} is out of range [{min_value}, {max_value}]: {value}")
+        tags[tag_name] = value
+        return value
+
+    def _parse_marker_response(self, content, max_score=15, tier_count=5):
+        max_score_int = int(float(max_score))
+        tier_count_int = int(float(tier_count))
+        if float(max_score_int) != float(max_score):
+            raise ValueError(f"max_score must be an integer-compatible value, got: {max_score!r}")
+        if float(tier_count_int) != float(tier_count):
+            raise ValueError(f"tier_count must be an integer-compatible value, got: {tier_count!r}")
+
+        tags = self._parse_marker_tags(content)
+        score = self._parse_required_int_tag(tags, "SCORE", 0, max_score_int)
+        tier = self._parse_required_int_tag(tags, "TIER", 0, tier_count_int)
+
+        if score == 0 and tier != 0:
+            raise ValueError(f"TIER must be 0 when SCORE is 0, got TIER={tier}")
+        if score > 0 and tier == 0:
+            raise ValueError(f"TIER can be 0 only when SCORE is 0, got SCORE={score}")
+
+        return score, tags
 
     def request_diagnosis(self, diagnosis_prompt):
         return self.call_llm(diagnosis_prompt, is_reflector=True)

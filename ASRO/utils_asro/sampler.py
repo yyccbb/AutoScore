@@ -21,6 +21,11 @@ class ASROSampler:
             log_progress("sampler", "SentenceTransformer moved to CUDA", model=model_name)
         log_progress("sampler", "SentenceTransformer ready", model=model_name)
 
+    def _flatten_grader_tags(self, grader_tags):
+        if isinstance(grader_tags, dict):
+            return dict(grader_tags)
+        return {"REASONING": str(grader_tags)}
+
     def _score_samples(self, D_train, current_g, client):
         log_progress("sampler", "scoring training samples for sampling", samples=len(D_train), workers=self.max_workers)
         if hasattr(client, "get_ordinal_score_batch"):
@@ -42,7 +47,7 @@ class ASROSampler:
         return score_results
 
     def _build_score_record(self, sample, score_result):
-        score, lp_pred, lp_true, reasoning = score_result
+        score, lp_pred, lp_true, grader_tags = score_result
         score = float(score)
         true_score = float(sample["true_score"])
         lp_pred = float(lp_pred)
@@ -62,7 +67,7 @@ class ASROSampler:
             "true": true_score,
             "pred": score,
             "misconf": float(misconf),
-            "reasoning": reasoning,
+            **self._flatten_grader_tags(grader_tags),
         }
 
     def sample_minibatch(self, D_train, current_g, client, k=5, batch_size=40):
