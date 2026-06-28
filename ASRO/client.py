@@ -99,11 +99,30 @@ class GradeOptClient:
 
     def get_ordinal_score(self, essay_text, guideline, true_score=None):
         user_prompt = self._build_grader_prompt(essay_text, guideline)
-        content = self.call_llm(user_prompt, is_reflector=False)
         max_score = guideline.get("max_score", 15)
         tier_count = guideline.get("tier_count", 5)
-        score, grader_tags = self._parse_marker_response(content, max_score=max_score, tier_count=tier_count)
-        return float(score), -1.0, -1.0, grader_tags
+        attempt = 0
+
+        while True:
+            attempt += 1
+            content = self.call_llm(user_prompt, is_reflector=False)
+            try:
+                score, grader_tags = self._parse_marker_response(
+                    content,
+                    max_score=max_score,
+                    tier_count=tier_count,
+                )
+            except ValueError as exc:
+                log_progress(
+                    "grader_parse",
+                    "grader response parse failed; retrying original prompt",
+                    sample_id="unknown",
+                    attempt=attempt,
+                    model=self.grader_model,
+                    error=self._abbreviate_error(exc),
+                )
+                continue
+            return float(score), -1.0, -1.0, grader_tags
 
     def get_ordinal_score_batch(self, samples, guideline, max_workers=5, use_multithread=True):
         log_progress(
@@ -131,18 +150,53 @@ class GradeOptClient:
             }
             for sample in samples
         ]
-        contents = _shared_call_llm_batch(
-            request_items,
-            max_workers=max_workers,
-            use_multithread=use_multithread,
-        )
-        log_progress("llm_batch", "grader batch responses received", samples=len(contents), model=self.grader_model)
-        results = []
         max_score = guideline.get("max_score", 15)
         tier_count = guideline.get("tier_count", 5)
-        for content in contents:
-            score, grader_tags = self._parse_marker_response(content, max_score=max_score, tier_count=tier_count)
-            results.append((float(score), -1.0, -1.0, grader_tags))
+        results = [None] * len(samples)
+        attempts = [0] * len(samples)
+        pending_indices = list(range(len(samples)))
+
+        while pending_indices:
+            pending_request_items = [request_items[idx] for idx in pending_indices]
+            contents = _shared_call_llm_batch(
+                pending_request_items,
+                max_workers=max_workers,
+                use_multithread=use_multithread,
+            )
+            if len(contents) != len(pending_indices):
+                raise RuntimeError(
+                    "Grader batch returned "
+                    f"{len(contents)} response(s) for {len(pending_indices)} pending request(s)."
+                )
+
+            retry_indices = []
+            for idx, content in zip(pending_indices, contents):
+                attempts[idx] += 1
+                try:
+                    score, grader_tags = self._parse_marker_response(
+                        content,
+                        max_score=max_score,
+                        tier_count=tier_count,
+                    )
+                except ValueError as exc:
+                    sample = samples[idx]
+                    sample_id = sample.get("id", "unknown") if isinstance(sample, dict) else "unknown"
+                    log_progress(
+                        "grader_parse",
+                        "grader response parse failed; retrying original prompt",
+                        sample_id=sample_id,
+                        attempt=attempts[idx],
+                        model=self.grader_model,
+                        error=self._abbreviate_error(exc),
+                    )
+                    retry_indices.append(idx)
+                    continue
+
+                results[idx] = (float(score), -1.0, -1.0, grader_tags)
+
+            pending_indices = retry_indices
+
+        log_progress("llm_batch", "grader batch responses received", samples=len(results), model=self.grader_model)
         log_progress("llm_batch", "grader batch parsed", samples=len(results), model=self.grader_model)
         return results
 
@@ -170,13 +224,18 @@ class GradeOptClient:
             raise ValueError(f"Invalid empty marker tag name: {tag_name!r}")
         return normalized
 
+    def _abbreviate_error(self, exc, max_length=300):
+        message = " ".join(str(exc).split())
+        if len(message) <= max_length:
+            return message
+        return f"{message[:max_length - 3]}..."
+
     def _parse_marker_tags(self, content):
         if not content:
             raise ValueError("Empty grader response")
         text = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         marker_pattern = re.compile(
-            r"^[ \t]*\[\[\s*([A-Za-z][A-Za-z0-9_ -]*)\s*\]\]\s*[:：][ \t]*",
-            re.MULTILINE,
+            r"\[\[\s*([^\[\]\r\n]+?)\s*\]\]\s*(?:[:：]\s*)?",
         )
         matches = list(marker_pattern.finditer(text))
         if not matches:
