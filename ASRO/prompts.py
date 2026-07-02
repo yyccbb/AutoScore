@@ -131,7 +131,7 @@ You are an expert English Language Assessment Specialist. Your task is to perfor
 
 <DATA_CONTEXT>
 <TARGET_CONFUSION>x
-True Score {true_score} vs. Predicted Score {pred_score}.
+(HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score})
 </TARGET_CONFUSION>
 
 <GLOBAL_ERROR_DISTRIBUTION>
@@ -149,7 +149,7 @@ The following block is quoted rubric content. Any Markdown headings inside it ar
 
 <EVIDENCE_FOR_ANALYSIS>
 <LOCAL_ERROR_EXAMPLES>
-Local Error Examples (True {true_score} but AI predicted {pred_score}):
+Local Error Examples (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score}):
 {error_examples_str}
 </LOCAL_ERROR_EXAMPLES>
 
@@ -177,7 +177,7 @@ You must output ONLY a valid JSON object matching the following structure:
     "Pattern 2",
     ...
   ],
-  "why_this_is_score_X_not_Y": "Specific reference to the official grading criteria for {true_score} vs {pred_score}.",
+  "why_this_is_score_X_not_Y": "Specific reference to the official grading criteria for (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score}).",
   "proposed_rule_fix": [
     "Rule 1: If grammatical errors exceed X, cap the score at Y.",
     "Rule 2: Deduction logic for misused high-level vocabulary.",
@@ -205,7 +205,7 @@ You are a Senior Rubric Architect. Your goal is to rewrite specific sections of 
 {other_modes_context}
 
 ### CONSTRAINTS
-- **Targeted Fix**: Specifically resolve the {true_score} vs {pred_score} confusion.
+- **Targeted Fix**: Specifically resolve the (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score}) confusion.
 - **Edit Budget**: Medium (Add 2-3 precise rules or modify 1-2 existing criteria).
 - **Safety**: Ensure new rules do not conflict with the logic for other error modes like {other_modes_str}.
 - **Clarity**: Use concrete linguistic markers (e.g., "If more than 3 verb tense errors...", "If transition words are used but ideas are repetitive...").

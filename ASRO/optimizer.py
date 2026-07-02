@@ -121,7 +121,13 @@ class GradeOptimizer:
     def refiner_step(self, g_k, diagnosis_json, other_modes_list, mode_pair, curr_round=1, **payload):
         t_score = mode_pair[0] / 2.0
         p_score = mode_pair[1] / 2.0
-        other_modes_str = ", ".join([f"{m[0] / 2.0}->{m[1] / 2.0}" for m in other_modes_list])
+        other_modes_str = ", ".join(
+            [
+                f"(HUMAN_REFERENCE_SCORE: {m[0] / 2.0} | "
+                f"MODEL_PREDICTED_SCORE: {m[1] / 2.0})"
+                for m in other_modes_list
+            ]
+        )
 
         from prompts import REFINER_SYSTEM_PROMPT
 

@@ -498,7 +498,10 @@ class ASROEngine:
             mode = guideline.get("target_mode", (0, 0))
             candidates.append(
                 {
-                    "mode": f"{mode[0] / 2.0} -> {mode[1] / 2.0}",
+                    "mode": (
+                        f"(HUMAN_REFERENCE_SCORE: {mode[0] / 2.0} | "
+                        f"MODEL_PREDICTED_SCORE: {mode[1] / 2.0})"
+                    ),
                     "content": guideline.get("Gar", ""),
                 }
             )
@@ -568,7 +571,10 @@ Output # MASTER ADAPTATION RULE (GAR) only.
         stats = {}
         for result in results:
             if int(round(float(result["true"]) * 2)) != int(round(float(result["pred"]) * 2)):
-                key = f"{result['true']}->{result['pred']}"
+                key = (
+                    f"(HUMAN_REFERENCE_SCORE: {result['true']} | "
+                    f"MODEL_PREDICTED_SCORE: {result['pred']})"
+                )
                 stats[key] = stats.get(key, 0) + 1
         sorted_stats = sorted(stats.items(), key=lambda item: item[1], reverse=True)[:5]
         return ", ".join([f"{key} ({count}pcs)" for key, count in sorted_stats])
