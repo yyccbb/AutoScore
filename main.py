@@ -810,7 +810,14 @@ def run_autoscore_pipeline(
     tier_count=5,
     tier_retries=2,
     strict=False,
+    samples_per_essay=1,
 ):
+    samples_per_essay = int(samples_per_essay)
+    if samples_per_essay < 1:
+        raise ValueError("samples_per_essay must be at least 1")
+    if samples_per_essay > 1 and mode != "baseline":
+        raise ValueError("samples_per_essay greater than 1 is supported only in baseline mode")
+
     in_path = Path(input_dir)
     res_dir = Path(out_dir)
     res_dir.mkdir(parents=True, exist_ok=True)
@@ -896,23 +903,47 @@ def run_autoscore_pipeline(
         return None
     
     if num: all_paths = all_paths[:num]
+    expected_essays = []
+    for path in all_paths:
+        student_id, q_id, filename_score = _parse_essay_stem(path.stem)
+        try:
+            true_score = float(filename_score)
+        except (TypeError, ValueError):
+            true_score = truth_lookup.get((dataset_name, student_id, q_id))
+        if student_id and q_id and true_score is not None:
+            expected_essays.append(
+                {
+                    "student_id": student_id,
+                    "q_id": q_id,
+                    "true_score": float(true_score),
+                    "stem": path.stem,
+                }
+            )
     analysis_data = []
     error_data = []
 
-    print(f"[INFO] Scoring {len(all_paths)} files with workers={workers}, mode={mode}")
+    total_calls = len(all_paths) * samples_per_essay
+    print(
+        f"[INFO] Scoring {len(all_paths)} files with workers={workers}, mode={mode}, "
+        f"samples_per_essay={samples_per_essay}, total_calls={total_calls}"
+    )
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [
-            executor.submit(
-                process_single_essay, 
-                p, truth_lookup, task_lookup, points_lookup, optimized_rules, client, res_dir,
-                dataset_name, temp, max_tokens, timeout, mode, max_score, tier_count, tier_retries, strict
-            ) for p in all_paths
-        ]
+        futures = {}
+        for path in all_paths:
+            for draw_index in range(1, samples_per_essay + 1):
+                future = executor.submit(
+                    process_single_essay,
+                    path, truth_lookup, task_lookup, points_lookup, optimized_rules, client, res_dir,
+                    dataset_name, temp, max_tokens, timeout, mode, max_score, tier_count, tier_retries, strict
+                )
+                futures[future] = draw_index
         
         for future in tqdm(as_completed(futures), total=len(futures), desc="Scoring", ncols=70):
             res = future.result()
             if not res:
                 continue
+            if samples_per_essay > 1:
+                res["draw_index"] = futures[future]
             if res.get("failed"):
                 error_data.append(res)
             else:
@@ -923,6 +954,28 @@ def run_autoscore_pipeline(
         error_path = res_dir / f"error_report_{dataset_name}.csv"
         error_df.to_csv(error_path, index=False, encoding='utf-8-sig')
         print(f"\nFailed samples: {len(error_data)} | error report: {error_path}")
+
+    if samples_per_essay > 1:
+        from utils.distribution_analysis import write_baseline_distribution_analysis
+
+        distribution_result = write_baseline_distribution_analysis(
+            draws=pd.DataFrame(analysis_data),
+            expected_essays=pd.DataFrame(expected_essays),
+            out_dir=res_dir,
+            dataset_name=dataset_name,
+            samples_per_essay=samples_per_essay,
+            max_score=max_score,
+            model_name=grader_model,
+            temperature=temp,
+        )
+        print(
+            "\nBaseline distribution analysis complete. "
+            f"draws={distribution_result['draws_path']} | "
+            f"summary={distribution_result['summary_path']} | "
+            f"report={distribution_result['report_path']} | "
+            f"plot={distribution_result['plot_path']}"
+        )
+        return distribution_result["draws"]
 
     if analysis_data:
         df = pd.DataFrame(analysis_data)
@@ -947,10 +1000,21 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, required=True, help="YAML 配置文件路径")
     parser.add_argument("--section", type=str, default="pipeline", help="YAML 配置段名称，默认 pipeline")
     parser.add_argument("--num", type=int, default=None, help="Limit OCR/scoring to this many samples, overriding config num.")
+    parser.add_argument(
+        "--samples-per-essay",
+        type=int,
+        default=None,
+        help="Number of independent baseline scoring calls per essay, overriding config samples_per_essay.",
+    )
     args = parser.parse_args()
 
     cfg = load_yaml_config(args.config, args.section)
     num = args.num if args.num is not None else cfg.get("num")
+    samples_per_essay = (
+        args.samples_per_essay
+        if args.samples_per_essay is not None
+        else cfg.get("samples_per_essay", 1)
+    )
 
     run_autoscore_pipeline(
         input_dir=cfg["input_dir"],
@@ -979,4 +1043,5 @@ if __name__ == "__main__":
         tier_count=cfg.get("tier_count", 5),
         tier_retries=cfg.get("tier_retries", 2),
         strict=cfg.get("strict", False),
+        samples_per_essay=samples_per_essay,
     )
