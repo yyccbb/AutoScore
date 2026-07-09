@@ -13,6 +13,9 @@ def npx_converter(obj):
         return float(obj)
     if isinstance(obj, np.ndarray):
         return obj.tolist()
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 

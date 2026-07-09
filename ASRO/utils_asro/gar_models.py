@@ -3,27 +3,49 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+_BAND_NAMES = {
+    5: "Fifth Band",
+    4: "Fourth Band",
+    3: "Third Band",
+    2: "Second Band",
+    1: "First Band",
+    0: "0 points",
+}
+
+
+def _string_rule_map(value, band_number, prefix):
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return {
+            str(rule_id): str(rule)
+            for rule_id, rule in value.items()
+        }
+    if isinstance(value, list):
+        return {
+            f"{prefix}_{band_number}_{idx:03d}": str(rule)
+            for idx, rule in enumerate(value, start=1)
+        }
+    return {f"{prefix}_{band_number}_001": str(value)}
+
+
 @dataclass
 class CanonicalBand:
     band_number: int
     minimum_score: int
     maximum_score: int
     broad_tiering_rules: dict[str, str] = field(default_factory=dict)
-    within_band_scoring_rules: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
-        if not 1 <= self.band_number <= 5:
-            raise ValueError("band number must be between 1 and 5")
+        if not 0 <= self.band_number <= 5:
+            raise ValueError("band number must be between 0 and 5")
         if self.minimum_score > self.maximum_score:
             raise ValueError("minimum score cannot exceed maximum score")
-        self.broad_tiering_rules = {
-            str(rule_id): str(rule)
-            for rule_id, rule in self.broad_tiering_rules.items()
-        }
-        self.within_band_scoring_rules = {
-            str(rule_id): str(rule)
-            for rule_id, rule in self.within_band_scoring_rules.items()
-        }
+        self.broad_tiering_rules = _string_rule_map( # TODO: not elegant
+            self.broad_tiering_rules,
+            self.band_number,
+            "bt",
+        )
 
     @classmethod
     def from_dict(cls, data):
@@ -31,14 +53,11 @@ class CanonicalBand:
             band_number=int(data["band_number"]),
             minimum_score=int(data["minimum_score"]),
             maximum_score=int(data["maximum_score"]),
-            broad_tiering_rules={
-                str(rule_id): str(rule)
-                for rule_id, rule in data.get("broad_tiering_rules", {}).items()
-            },
-            within_band_scoring_rules={
-                str(rule_id): str(rule)
-                for rule_id, rule in data.get("within_band_scoring_rules", {}).items()
-            },
+            broad_tiering_rules=_string_rule_map(
+                data.get("broad_tiering_rules", {}),
+                int(data["band_number"]),
+                "bt",
+            ),
         )
 
     def to_dict(self):
@@ -47,7 +66,6 @@ class CanonicalBand:
             "minimum_score": self.minimum_score,
             "maximum_score": self.maximum_score,
             "broad_tiering_rules": dict(self.broad_tiering_rules),
-            "within_band_scoring_rules": dict(self.within_band_scoring_rules),
         }
 
     @classmethod
@@ -56,6 +74,76 @@ class CanonicalBand:
 
     def to_json(self):
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+
+    def score_range_text(self):
+        if self.band_number == 0:
+            return "0 points"
+        if self.minimum_score == self.maximum_score:
+            return f"{self.minimum_score} points"
+        return f"{self.minimum_score}-{self.maximum_score} points"
+
+    def to_text(self):
+        label = _BAND_NAMES.get(self.band_number, f"Band {self.band_number}")
+        if self.band_number == 0:
+            lines = [label]
+        else:
+            lines = [f"{label} ({self.score_range_text()})"]
+        for idx, rule in enumerate(self.broad_tiering_rules.values(), start=1):
+            lines.append(f"{idx}. {rule}")
+        return "\n".join(lines).strip()
+
+
+@dataclass
+class GarBand(CanonicalBand):
+    within_band_scoring_rules: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not 1 <= self.band_number <= 5:
+            raise ValueError("GAR band number must be between 1 and 5")
+        self.within_band_scoring_rules = _string_rule_map(
+            self.within_band_scoring_rules,
+            self.band_number,
+            "wb",
+        )
+
+    @classmethod
+    def from_canonical_band(cls, band):
+        if isinstance(band, cls):
+            return band
+        if isinstance(band, CanonicalBand):
+            return cls(
+                band_number=band.band_number,
+                minimum_score=band.minimum_score,
+                maximum_score=band.maximum_score,
+                broad_tiering_rules={},
+                within_band_scoring_rules={},
+            )
+        return cls.from_dict(band)
+
+    @classmethod
+    def from_dict(cls, data):
+        band_number = int(data["band_number"])
+        return cls(
+            band_number=band_number,
+            minimum_score=int(data["minimum_score"]),
+            maximum_score=int(data["maximum_score"]),
+            broad_tiering_rules=_string_rule_map(
+                data.get("broad_tiering_rules", {}),
+                band_number,
+                "bt",
+            ),
+            within_band_scoring_rules=_string_rule_map(
+                data.get("within_band_scoring_rules", {}),
+                band_number,
+                "wb",
+            ),
+        )
+
+    def to_dict(self):
+        data = super().to_dict()
+        data["within_band_scoring_rules"] = dict(self.within_band_scoring_rules)
+        return data
 
 
 @dataclass
@@ -95,18 +183,21 @@ class RefinerOperation:
 
 @dataclass
 class GAR:
-    canonical_bands: list[CanonicalBand]
+    canonical_bands: list[GarBand]
 
     @classmethod
-    def from_bands(cls, canonical_bands):
+    def from_bands(cls, canonical_bands): # Only keeps band number and range
         return cls(
-            canonical_bands=list(canonical_bands),
+            canonical_bands=[
+                GarBand.from_canonical_band(band)
+                for band in canonical_bands
+            ],
         )
 
     @classmethod
     def from_dict(cls, data):
         return cls(
-            canonical_bands=[CanonicalBand.from_dict(item) for item in data["canonical_bands"]],
+            canonical_bands=[GarBand.from_dict(item) for item in data["canonical_bands"]],
         )
 
     def to_dict(self):
@@ -132,3 +223,96 @@ def gar_from_value(value):
 
 def gar_to_json(value):
     return gar_from_value(value).to_json()
+
+
+@dataclass
+class GSR:
+    general_principles: list[str] = field(default_factory=list)
+    canonical_bands: list[CanonicalBand] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.general_principles = [str(item) for item in self.general_principles]
+        self.canonical_bands = [
+            band if isinstance(band, CanonicalBand) else CanonicalBand.from_dict(band)
+            for band in self.canonical_bands
+        ]
+        band_numbers = {band.band_number for band in self.canonical_bands}
+        if band_numbers != set(range(0, 6)):
+            raise ValueError("GSR must contain canonical bands 0 through 5 exactly once")
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            general_principles=[str(item) for item in data.get("general_principles", [])],
+            canonical_bands=[
+                CanonicalBand.from_dict(item)
+                for item in data["canonical_bands"]
+            ],
+        )
+
+    def to_dict(self):
+        return {
+            "general_principles": list(self.general_principles),
+            "canonical_bands": [band.to_dict() for band in self.canonical_bands],
+        }
+
+    @classmethod
+    def from_json(cls, text):
+        return cls.from_dict(json.loads(text))
+
+    def to_json(self):
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+
+    def scoring_principles_text(self):
+        return "\n".join(
+            f"{idx}. {principle}"
+            for idx, principle in enumerate(self.general_principles, start=1)
+        ).strip()
+
+    def banding_rules_text(self):
+        ordered_bands = sorted(
+            self.canonical_bands,
+            key=lambda band: band.band_number,
+            reverse=True,
+        )
+        return "\n\n".join(band.to_text() for band in ordered_bands).strip()
+
+    def to_text(self):
+        sections = ["I. Scoring Principles"]
+        principles = self.scoring_principles_text()
+        if principles:
+            sections.append(principles)
+        sections.append("II. Score Ranges and Requirements for Each Band")
+        banding = self.banding_rules_text()
+        if banding:
+            sections.append(banding)
+        return "\n".join(sections).strip()
+
+
+def gsr_from_value(value):
+    if isinstance(value, GSR):
+        return value
+    if isinstance(value, dict):
+        return GSR.from_dict(value)
+    text = str(value).strip()
+    return GSR.from_json(text)
+
+
+def gsr_to_text(value):
+    if not value:
+        return ""
+    if isinstance(value, GSR):
+        return value.to_text()
+    if isinstance(value, dict):
+        return GSR.from_dict(value).to_text()
+    text = str(value).strip()
+    if text.startswith("{"):
+        try:
+            return GSR.from_json(text).to_text()
+        except Exception:
+            pass
+    return text
+
+
+def gsr_to_json(value):
+    return gsr_from_value(value).to_json()

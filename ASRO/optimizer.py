@@ -1,6 +1,7 @@
 import json
 import re
 
+from utils_asro.gar_models import GAR, gar_to_json, gsr_to_text
 from utils_asro.progress import log_progress
 
 GRADER_TAG_RENDER_ORDER = (
@@ -62,8 +63,9 @@ class GradeOptimizer:
                 return str(value).strip()
 
         guideline = guideline or {}
-        gsr = normalize(guideline.get("Gsr"))
-        gar = normalize(guideline.get("Gar"))
+        gsr = gsr_to_text(guideline.get("Gsr"))
+        raw_gar = guideline.get("Gar")
+        gar = gar_to_json(raw_gar) if raw_gar else ""
         sections = []
 
         if gsr:
@@ -132,7 +134,7 @@ class GradeOptimizer:
         from prompts import REFINER_SYSTEM_PROMPT
 
         user_prompt = REFINER_SYSTEM_PROMPT.format(
-            current_rubric=g_k.get("Gar", ""),
+            current_rubric=gar_to_json(g_k["Gar"]),
             diagnosis_json=json.dumps(diagnosis_json, indent=2, ensure_ascii=False),
             error_examples_str="[See provided analysis]",
             other_modes_context=f"Warning: Conflicts may arise with: {other_modes_str}",
@@ -155,7 +157,7 @@ class GradeOptimizer:
             log_progress("refiner", "JSON patch parsed", round=curr_round, mode=f"{t_score}->{p_score}")
 
             if isinstance(refiner_data, dict) and "full_refined_rubric" in refiner_data:
-                return refiner_data["full_refined_rubric"]
+                return GAR.from_dict(refiner_data["full_refined_rubric"]).to_dict()
 
             raise ValueError("Refiner JSON does not contain full_refined_rubric")
         except Exception as exc:

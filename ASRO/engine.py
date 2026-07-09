@@ -23,6 +23,7 @@ finally:
         sys.path.insert(0, _path)
 
 from utils_asro.sampler import ASROSampler
+from utils_asro.gar_models import GAR, gar_to_json
 from utils_asro.progress import log_progress
 from utils_asro.utils import print_round_dashboard, save_guideline, _legacy_cleanup, _score_to_tier
 
@@ -159,7 +160,7 @@ class ASROEngine:
         for result in results:
             true_idx = int(round(float(result["true"]) * 2))
             pred_idx = int(round(float(result["pred"]) * 2))
-            if true_idx == pred_idx:
+            if true_idx == pred_idx or abs(true_idx - pred_idx) == 1:
                 continue
 
             mode = (true_idx, pred_idx)
@@ -489,7 +490,7 @@ class ASROEngine:
     def priority_consolidate(self, mode_rules_pool, p_current):
         if not mode_rules_pool:
             log_progress("consolidate", "no candidates; keeping current Gar")
-            return p_current.get("Gar", "")
+            return p_current["Gar"]
 
         candidates = []
         for guideline in mode_rules_pool:
@@ -502,7 +503,7 @@ class ASROEngine:
                         f"(HUMAN_REFERENCE_SCORE: {mode[0] / 2.0} | "
                         f"MODEL_PREDICTED_SCORE: {mode[1] / 2.0})"
                     ),
-                    "content": guideline.get("Gar", ""),
+                    "content": gar_to_json(guideline["Gar"]),
                 }
             )
 
@@ -516,10 +517,26 @@ Merge the following patches into the current Gar.
 {patches}
 
 [MISSION]
-Synthesize them into a single, cohesive Markdown section. Resolve contradictions.
-Output # MASTER ADAPTATION RULE (GAR) only.
+Synthesize them into one complete structured GAR. Resolve contradictions while preserving canonical_bands.
+The schema example below is abbreviated. Return every existing canonical band and preserve every existing rule ID unless replacing that rule.
+Use integer band_number values in canonical_bands.
+Store broad_tiering_rules and within_band_scoring_rules inside the matching canonical band object.
+Use stable string rule IDs as dictionary keys, e.g. "bt_5_001" for Band 5 broad-tiering rules and "wb_5_001" for Band 5 within-band scoring rules.
+Put band-placement guidance in a band's broad_tiering_rules and exact-score guidance in a band's within_band_scoring_rules to match the human reference scores directly.
+Output only one valid JSON object with exactly this top-level field:
+{{
+  "canonical_bands": [
+    {{
+      "band_number": 5,
+      "minimum_score": 13,
+      "maximum_score": 15,
+      "broad_tiering_rules": {{"bt_5_001": "rule text"}},
+      "within_band_scoring_rules": {{"wb_5_001": "rule text"}}
+    }}
+  ]
+}}
 """.format(
-            current_gar=p_current.get("Gar", "None"),
+            current_gar=gar_to_json(p_current["Gar"]),
             patches="\n".join(f"- For error mode {c['mode']}: {c['content']}" for c in candidates),
         )
 
@@ -531,9 +548,9 @@ Output # MASTER ADAPTATION RULE (GAR) only.
         )
         if final_res:
             log_progress("consolidate", "LLM merge request finished", response_chars=len(final_res))
-            return _legacy_cleanup(final_res)
+            return GAR.from_json(_legacy_cleanup(final_res)).to_dict()
         log_progress("consolidate", "LLM merge returned empty response")
-        return p_current.get("Gar", "")
+        return p_current["Gar"]
 
     def _get_top_k_modes(self, results, k):
         matrix_size = int(round(self.max_score * 2)) + 1
@@ -541,7 +558,7 @@ Output # MASTER ADAPTATION RULE (GAR) only.
         for result in results:
             t_idx = int(round(float(result["true"]) * 2))
             p_idx = int(round(float(result["pred"]) * 2))
-            if t_idx != p_idx and 0 <= t_idx < matrix_size and 0 <= p_idx < matrix_size:
+            if abs(t_idx - p_idx) > 1 and 0 <= t_idx < matrix_size and 0 <= p_idx < matrix_size:
                 weighted_cm[t_idx][p_idx] += float(result["misconf"])
         top_indices = np.argsort(weighted_cm.flatten())[::-1][:k]
         return [
@@ -570,11 +587,14 @@ Output # MASTER ADAPTATION RULE (GAR) only.
     def _generate_cm_report(self, results):
         stats = {}
         for result in results:
-            if int(round(float(result["true"]) * 2)) != int(round(float(result["pred"]) * 2)):
-                key = (
-                    f"(HUMAN_REFERENCE_SCORE: {result['true']} | "
-                    f"MODEL_PREDICTED_SCORE: {result['pred']})"
-                )
-                stats[key] = stats.get(key, 0) + 1
+            true_idx = int(round(float(result["true"]) * 2))
+            pred_idx = int(round(float(result["pred"]) * 2))
+            if true_idx == pred_idx or abs(true_idx - pred_idx) == 1:
+                continue
+            key = (
+                f"(HUMAN_REFERENCE_SCORE: {result['true']} | "
+                f"MODEL_PREDICTED_SCORE: {result['pred']})"
+            )
+            stats[key] = stats.get(key, 0) + 1
         sorted_stats = sorted(stats.items(), key=lambda item: item[1], reverse=True)[:5]
         return ", ".join([f"{key} ({count}pcs)" for key, count in sorted_stats])

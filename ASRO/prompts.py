@@ -54,25 +54,26 @@ Question Stem (Gqs):
 
 
 <student_response>
-"{text}"
+{text}
 </student_response>
 
 
 <scoring_rules>
 ## Scoring Rubric (Gsr):
-<gsr_scoring_principles>
+<gsr_general_principles>
 {gsr_principles}
-</gsr_scoring_principles>
+</gsr_general_principles>
 <gsr_banding_rules>
 {gsr_banding_rules}
 </gsr_banding_rules>
-## End of Gsr
 
 ## Adaptation Rules (Gar):
-<gar_rules>
-{gar_rules}
-</gar_rules>
-## End of Gar
+<gar_banding_rules>
+{gar_banding_rules}
+</gar_banding_rules>
+<gar_within_band_scoring>
+{gar_within_band_rules}
+</gar_within_band_scoring>
 </scoring_rules>
 
 
@@ -235,10 +236,11 @@ You are a Senior Rubric Architect. Your goal is to rewrite specific sections of 
 - **Edit Budget**: Medium (Add 2-3 precise rules or modify 1-2 existing criteria).
 - **Safety**: Ensure new rules do not conflict with the logic for other error modes like {other_modes_str}.
 - **Clarity**: Use concrete linguistic markers (e.g., "If more than 3 verb tense errors...", "If transition words are used but ideas are repetitive...").
-- **Structure**: Preserve the three GAR fields and keep canonical_bands unchanged.
-- **Band Keys**: Use integer band_number values in canonical_bands and stringified band numbers ("1" through "5") as rule-map keys.
-- **Complete Output**: The schema example below is abbreviated. Return every existing canonical band and every existing band key.
-- **Ground-Truth Targeting**: Put band-placement guidance in broad_tiering_rules and exact-score guidance in within_band_scoring_rules to match the human reference scores directly.
+- **Structure**: Preserve the GAR object with canonical_bands as the only top-level field. Keep each band's band_number and score bounds unchanged.
+- **Band Rule Storage**: Store broad_tiering_rules and within_band_scoring_rules inside the matching canonical band object.
+- **Rule IDs**: Use stable string rule IDs as dictionary keys, e.g. "bt_5_001" for Band 5 broad-tiering rules and "wb_5_001" for Band 5 within-band scoring rules. Preserve existing rule IDs when modifying existing rules.
+- **Complete Output**: The schema example below is abbreviated. Return every existing canonical band and preserve every existing rule ID unless replacing that rule.
+- **Ground-Truth Targeting**: Put band-placement guidance in a band's broad_tiering_rules and exact-score guidance in a band's within_band_scoring_rules to match the human reference scores directly.
 
 ### OUTPUT FORMAT
 You must output ONLY a valid JSON object with the following keys:
@@ -254,38 +256,61 @@ You must output ONLY a valid JSON object with the following keys:
   "integration_strategy": "How these changes should be merged into the structured GAR.",
   "full_refined_rubric": {{
     "canonical_bands": [
-      {{"band_number": 5, "minimum_score": 13, "maximum_score": 15}}
-    ],
-    "broad_tiering_rules": {{"5": ["rule text"]}},
-    "within_band_scoring_rules": {{"5": ["rule text"]}}
+      {{
+        "band_number": 5,
+        "minimum_score": 13,
+        "maximum_score": 15,
+        "broad_tiering_rules": {{"bt_5_001": "rule text"}},
+        "within_band_scoring_rules": {{"wb_5_001": "rule text"}}
+      }}
+    ]
   }},
   "cross_mode_safety_justification": "Explanation of why these changes won't break the scoring for {other_modes_str}."
 }}
 """
 
 
-CANONICAL_BANDS_EXTRACTION_PROMPT = """
-You are extracting the official scoring bands from an English essay scoring rubric.
+GSR_EXTRACTION_PROMPT = """
+You are structurally parsing an official English essay scoring rubric.
 
 [SCORING RUBRIC]
 {gsr}
 
 Return only one valid JSON object with this shape:
 {{
+  "general_principles": [
+    "The total score for this task is 15 points, assigned according to five bands."
+  ],
   "canonical_bands": [
     {{
       "band_number": 5,
       "minimum_score": 13,
-      "maximum_score": 15
+      "maximum_score": 15,
+      "broad_tiering_rules": {{
+        "gsr_bt_5_001": "Fully completed the task specified in the prompt.",
+        "gsr_bt_5_002": "Covers all content points."
+      }}
+    }},
+    {{
+      "band_number": 0,
+      "minimum_score": 0,
+      "maximum_score": 0,
+      "broad_tiering_rules": {{
+        "gsr_bt_0_001": "No information is conveyed to the reader."
+      }}
     }}
   ]
 }}
 
 Requirements:
-- Include only the five official non-zero scoring bands (Bands 1 through 5).
-- Use an integer band_number from 1 through 5 and preserve their order in the scoring rubric.
+- Split the rubric into general_principles and canonical_bands.
+- general_principles must contain every scoring principle before the section that states requirements for each band.
+- canonical_bands must contain exactly six bands: 5, 4, 3, 2, 1, and 0.
+- Use integer band_number values and preserve the rubric's band order.
 - Copy each numeric lower and upper score boundary exactly.
-- Do not include the separate zero-score condition.
+- Store every official band requirement, including the 0-point condition, inside that band's broad_tiering_rules.
+- Usually every band description (except for the 0-point band) has vague guiding directives (e.g. "basically completes the task") before the numbered list of practical requirements. Do not store the vague guiding directives in this case.
+- Use stable string rule IDs such as "gsr_bt_5_001" (i.e. gsr_bt_<band_number>_<rule_number>).
 - Do not add any other fields.
 """
 

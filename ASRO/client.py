@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Lock
 
 import prompts as prompts
+from utils_asro.gar_models import GSR, gar_to_json, gsr_from_value, gsr_to_text
 from utils_asro.progress import log_progress
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -88,14 +89,30 @@ class GradeOptClient:
     def _build_grader_prompt(self, essay_text, guideline):
         raw_gar = guideline.get("Gar", "")
         clean_gar = self._purify_gar(raw_gar)
+        gsr_principles, gsr_banding_rules = self._render_gsr_sections(guideline.get("Gsr", ""))
         return prompts.GRADER_PROMPT_TEMPLATE.format(
             Gqs=guideline.get("Gqs", ""),
-            Gsr=guideline.get("Gsr", ""),
-            Gar=clean_gar,
+            gsr_principles=gsr_principles,
+            gsr_banding_rules=gsr_banding_rules,
+            gar_rules=clean_gar,
             text=essay_text,
             max_score=guideline.get("max_score", 15),
             tier_count=guideline.get("tier_count", 5),
         )
+
+    def _render_gsr_sections(self, raw_gsr):
+        if not raw_gsr:
+            return "", ""
+        try:
+            structured_gsr = gsr_from_value(raw_gsr)
+        except Exception:
+            return gsr_to_text(raw_gsr), ""
+        if isinstance(structured_gsr, GSR):
+            return (
+                structured_gsr.scoring_principles_text(),
+                structured_gsr.banding_rules_text(),
+            )
+        return gsr_to_text(raw_gsr), ""
 
     def get_ordinal_score(self, essay_text, guideline, true_score=None):
         user_prompt = self._build_grader_prompt(essay_text, guideline)
@@ -203,8 +220,11 @@ class GradeOptClient:
     def _purify_gar(self, raw_gar):
         if not raw_gar:
             return ""
-        if isinstance(raw_gar, dict):
-            return "\n".join([f"### {k.upper()}\n{v}" for k, v in raw_gar.items()])
+        if not isinstance(raw_gar, str):
+            try:
+                return gar_to_json(raw_gar)
+            except Exception:
+                pass
         text = str(raw_gar).strip()
         if "```" in text:
             text = re.sub(r"```[a-zA-Z]*\n?", "", text).replace("```", "").strip()
