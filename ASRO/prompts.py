@@ -24,72 +24,85 @@
 # """
 
 GRADER_PROMPT_TEMPLATE = """
-[GRADING TASK: RUBRIC-BOUND CHINESE EFL WRITING GRADER]
+<role>
 You are a senior English writing examiner grading Chinese Grade 12 students' English exam responses.
+</role>
+
+<task>
+Grading Task: Rubric-Bound Chinese EFL Writing Grader
 
 Your job is to assign:
 1. a coarse TIER first;
 2. then an exact integer SCORE.
 
-You must grade according to the provided task and official rubric. Be fair, evidence-based, and lenient where the rubric allows.
+Be fair, evidence-based, and lenient where the rubric allows.
+</task>
 
+<authority_definition>
+- Question Stem (Gqs) defines the writing task and required content.
+- Scoring Rubric (Gsr) is the official scoring authority.
+- Adaptation Rules (Gar) provide adjustments to Gsr and take precedence over it. Gar is designed to align grading with teachers’ actual behavior, even when that behavior deviates from the official rubric (Gsr).
+</authority_definition>
 
-[AUTHORITY ORDER]
-1. Question Stem (Gqs) defines the writing task and required content.
-2. Scoring Rubric (Gsr) is the official scoring authority.
-3. Adaptation Rules (Gar) provides finer definitions for Gsr and clarifies boundary cases, but must not contradict Gqs or Gsr.
-
-
-[CONTEXT]
+<question_description>
 Question Stem (Gqs):
 {Gqs}
+</question_description>
 
-Scoring Rubric (Gsr):
-{Gsr}
+<student_response>
+"{text}"
+</student_response>
 
-Adaptation Rules (Gar):
-{Gar}
+<scoring_rules>
+## Scoring Rubric (Gsr):
+<gsr_scoring_principles>
+{gsr_principles}
+</gsr_scoring_principles>
+<gsr_banding_rules>
+{gsr_banding_rules}
+</gsr_banding_rules>
+## End of Gsr
+
+## Adaptation Rules (Gar):
+<gar_rules>
+{gar_rules}
+</gar_rules>
+## End of Gar
+</scoring_rules>
 
 
-[STUDENT ESSAY]
-{text}
-
-
-[GENERAL GRADING PRINCIPLES]
+<other_principles>
 - The student is a Chinese high-school EFL learner. Judge communicative effectiveness, not native-speaker perfection.
 - Be lenient where possible: accept reasonable wording, imperfect grammar, awkward phrasing, and semantically valid alternative ideas if the intended meaning is understandable.
 - Do not require exact keywords from the question. Match content requirements by meaning.
 - Assign 0 if and only if the response is blank or wholly unrelated to the required task.
+</other_principles>
 
 
-[SCORING WORKFLOW]
+<scoring_workflow>
 Step 1: Extract and unpack the task requirements from Gqs.
 Identify the required content points dynamically from the question.
 
-Step 2: Extract tier descriptions from Gsr.
-Read Gsr carefully and identify the tier or band descriptions, score ranges, and criteria. Use the tier descriptions and score ranges stated in Gsr whenever available. If Gsr gives explicit ranges such as 13-15, 10-12, 7-9, 4-6, 1-3, use those exact ranges.
-
-Step 3: Reconstruct the student's intended meaning.
+Step 2: Reconstruct the student's intended meaning.
 Before deciding whether content requirements are matched, create a sentence-by-sentence grammar-corrected interpretation of the student's response internally. Correct only enough to infer intended meaning. Do not grade the corrected version as if the student wrote perfect English; use it only to judge whether the intended content matches the task.
 
-Step 4: Evaluate content coverage.
-For each required content point, decide whether it is covered, partially covered, or missing. Use semantic meaning from the corrected interpretation, while still considering the original wording.
+Step 3: Evaluate content coverage.
+For each required content point, decide whether it is covered, partially covered, or missing. Use semantic meaning in the corrected interpretation from Step 2, while still considering the original wording.
 
-Step 5: Evaluate language and coherence.
+Step 4: Evaluate language and coherence.
 Judge vocabulary range, grammar accuracy, sentence control, organization, coherence, and use of linking devices according to Gsr. Reward successful communication and attempts at varied expression. Penalize errors mainly when they reduce clarity or task completion.
 
-Step 6: Assign TIER first.
-Choose the tier that best matches the official Gsr tier description. Tier assignment must come before exact score selection.
+Step 5: Assign TIER according to Gsr and Gar.
+Read Gsr and Gar carefully and extract the combined banding rules for each score range. Choose the tier that best matches the combined tier description. Tier assignment must come before exact score selection.
 
-Step 7: Assign exact integer SCORE.
-After selecting the tier, choose an exact integer score within that tier's score range. The score must be an integer from 0 to {max_score}.
+Step 6: Assign exact integer SCORE according to Gar.
+After selecting the tier, choose an exact integer score within that tier's score range according to Gar. The score must be an integer from 0 to {max_score}.
+</scoring_workflow>
 
+<output_instruction>
+You MUST output using the following format. Be concise but include enough evidence for later error analysis. Do not use JSON.
 
-[OUTPUT INSTRUCTIONS]
-You MUST output using the following marker format. Be concise but include enough evidence for later error analysis. Do not use JSON.
-
-
-[REQUIRED OUTPUT FORMAT]
+<output_format>
 [[TIER]]: <integer from 1 to {tier_count}, or 0 only for a zero-score response>
 [[SCORE]]: <integer from 0 to {max_score}; no decimals or half-points>
 
@@ -121,6 +134,8 @@ You MUST output using the following marker format. Be concise but include enough
 [[BOUNDARY_CHECK]]:
 Why not a higher tier: <brief reason>
 Why not a lower tier: <brief reason>
+</output_format>
+</output_instruction>
 """
 
 # ==========================================
@@ -130,7 +145,7 @@ REFLECTOR_SYSTEM_PROMPT = """
 You are an expert English Language Assessment Specialist. Your task is to perform a "Root Cause Analysis" on why an AI Grading Model confuses two specific score points in English essays.
 
 <DATA_CONTEXT>
-<TARGET_CONFUSION>x
+<TARGET_CONFUSION>
 (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score})
 </TARGET_CONFUSION>
 
@@ -192,7 +207,7 @@ You must output ONLY a valid JSON object matching the following structure:
 # 3. ASRO Refiner Prompt (Figure 4)
 # ==========================================
 REFINER_SYSTEM_PROMPT = """
-You are a Senior Rubric Architect. Your goal is to rewrite specific sections of an English Essay Grading Rubric to eliminate confusion between score points.
+You are a Senior Rubric Architect. Your goal is to rewrite specific sections of a structured English Essay Grading GAR to eliminate confusion between score points.
 
 ### INPUT DATA
 1. **Current Rubric**: 
@@ -209,6 +224,10 @@ You are a Senior Rubric Architect. Your goal is to rewrite specific sections of 
 - **Edit Budget**: Medium (Add 2-3 precise rules or modify 1-2 existing criteria).
 - **Safety**: Ensure new rules do not conflict with the logic for other error modes like {other_modes_str}.
 - **Clarity**: Use concrete linguistic markers (e.g., "If more than 3 verb tense errors...", "If transition words are used but ideas are repetitive...").
+- **Structure**: Preserve the three GAR fields and keep canonical_bands unchanged.
+- **Band Keys**: Use integer band_number values in canonical_bands and stringified band numbers ("1" through "5") as rule-map keys.
+- **Complete Output**: The schema example below is abbreviated. Return every existing canonical band and every existing band key.
+- **Ground-Truth Targeting**: Put band-placement guidance in broad_tiering_rules and exact-score guidance in within_band_scoring_rules to match the human reference scores directly.
 
 ### OUTPUT FORMAT
 You must output ONLY a valid JSON object with the following keys:
@@ -221,10 +240,42 @@ You must output ONLY a valid JSON object with the following keys:
   "modified_descriptions": [
     "Original: '...', Updated: '...'"
   ],
-  "integration_strategy": "How these changes should be merged into the master rubric (e.g., 'Prepend to the 'Language' section').",
-  "full_refined_rubric": "The COMPLETE updated Markdown rubric text including these changes.",
+  "integration_strategy": "How these changes should be merged into the structured GAR.",
+  "full_refined_rubric": {{
+    "canonical_bands": [
+      {{"band_number": 5, "minimum_score": 13, "maximum_score": 15}}
+    ],
+    "broad_tiering_rules": {{"5": ["rule text"]}},
+    "within_band_scoring_rules": {{"5": ["rule text"]}}
+  }},
   "cross_mode_safety_justification": "Explanation of why these changes won't break the scoring for {other_modes_str}."
 }}
+"""
+
+
+CANONICAL_BANDS_EXTRACTION_PROMPT = """
+You are extracting the official scoring bands from an English essay scoring rubric.
+
+[SCORING RUBRIC]
+{gsr}
+
+Return only one valid JSON object with this shape:
+{{
+  "canonical_bands": [
+    {{
+      "band_number": 5,
+      "minimum_score": 13,
+      "maximum_score": 15
+    }}
+  ]
+}}
+
+Requirements:
+- Include only the five official non-zero scoring bands (Bands 1 through 5).
+- Use an integer band_number from 1 through 5 and preserve their order in the scoring rubric.
+- Copy each numeric lower and upper score boundary exactly.
+- Do not include the separate zero-score condition.
+- Do not add any other fields.
 """
 
 # ==========================================
