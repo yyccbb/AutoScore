@@ -28,6 +28,7 @@ GRADER_PROMPT_TEMPLATE = """
 You are a senior English writing examiner grading Chinese Grade 12 students' English exam responses.
 </role>
 
+
 <task>
 Grading Task: Rubric-Bound Chinese EFL Writing Grader
 
@@ -38,20 +39,24 @@ Your job is to assign:
 Be fair, evidence-based, and lenient where the rubric allows.
 </task>
 
+
 <authority_definition>
 - Question Stem (Gqs) defines the writing task and required content.
 - Scoring Rubric (Gsr) is the official scoring authority.
 - Adaptation Rules (Gar) provide adjustments to Gsr and take precedence over it. Gar is designed to align grading with teachers’ actual behavior, even when that behavior deviates from the official rubric (Gsr).
 </authority_definition>
 
+
 <question_description>
 Question Stem (Gqs):
 {Gqs}
 </question_description>
 
+
 <student_response>
 "{text}"
 </student_response>
+
 
 <scoring_rules>
 ## Scoring Rubric (Gsr):
@@ -93,47 +98,53 @@ Step 4: Evaluate language and coherence.
 Judge vocabulary range, grammar accuracy, sentence control, organization, coherence, and use of linking devices according to Gsr. Reward successful communication and attempts at varied expression. Penalize errors mainly when they reduce clarity or task completion.
 
 Step 5: Assign TIER according to Gsr and Gar.
-Read Gsr and Gar carefully and extract the combined banding rules for each score range. Choose the tier that best matches the combined tier description. Tier assignment must come before exact score selection.
+Read Gsr and Gar carefully and extract the combined banding rules for each score range. Choose the tier that best matches the combined tier description and **identify the rule(s) used**. Tier assignment must come before exact score selection.
 
 Step 6: Assign exact integer SCORE according to Gar.
-After selecting the tier, choose an exact integer score within that tier's score range according to Gar. The score must be an integer from 0 to {max_score}.
+After selecting the tier, choose an exact integer score within that tier's score range according to Gar and **identify the rule(s) used**. The score must be an integer from 0 to {max_score}.
 </scoring_workflow>
+
 
 <output_instruction>
 You MUST output using the following format. Be concise but include enough evidence for later error analysis. Do not use JSON.
 
 <output_format>
-[[TIER]]: <integer from 1 to {tier_count}, or 0 only for a zero-score response>
-[[SCORE]]: <integer from 0 to {max_score}; no decimals or half-points>
-
-[[CORRECTED_MEANING]]:
+[[CORRECTED_MEANING]]
 - sentence_1: <brief grammar-corrected interpretation>
 - sentence_2: <brief grammar-corrected interpretation>
 - continue only as needed
 
-[[TASK_REQUIREMENTS]]:
+[[TASK_REQUIREMENTS]]
 - requirement_1: <covered/partial/missing> | <brief evidence or "missing">
 - requirement_2: <covered/partial/missing> | <brief evidence or "missing">
 - add more requirements only if Gqs contains more
 
-[[CONTENT_JUDGMENT]]:
-<brief judgment of whether the intended meaning satisfies the task>
-
-[[LANGUAGE_JUDGMENT]]:
+[[LANGUAGE_JUDGMENT]]
 <brief judgment of vocabulary, grammar, accuracy, and communicative clarity>
 
-[[COHERENCE_JUDGMENT]]:
+[[COHERENCE_JUDGMENT]]
 <brief judgment of organization, logic, and linking>
 
-[[GAR_APPLICATION]]:
-<used/not used/conflict> | <brief explanation>
+[[TIER]]
+<integer from 1 to {tier_count}, or 0 only for a zero-score response>
 
-[[REASONING]]:
-<brief holistic explanation linking tier and score to Gsr>
+[[TIERING_RULES_USED]]
+- tiering_rule_1: <copy exactly the rule used to assign TIER>
+- tiering_rule_2: <copy exactly the rule used to assign TIER>
+- continue if more tiering rules are used
 
 [[BOUNDARY_CHECK]]:
 Why not a higher tier: <brief reason>
 Why not a lower tier: <brief reason>
+
+[[SCORE]]
+ <integer from 0 to {max_score}; no decimals or half-points>
+ 
+[[SCORING_RULES_USED]]
+- scoring_rule_1: <copy exactly the rule used to assign SCORE within the tier>
+- scoring_rule_2: <copy exactly the rule used to assign SCORE within the tier>
+- continue if more scoring rules are used
+
 </output_format>
 </output_instruction>
 """
