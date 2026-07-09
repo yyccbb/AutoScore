@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Lock
 
 import prompts as prompts
-from utils_asro.gar_models import GSR, gar_to_json, gsr_from_value, gsr_to_text
+from utils_asro.gar_models import GSR, gar_from_value, gar_to_json, gsr_from_value, gsr_to_text
 from utils_asro.progress import log_progress
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -90,11 +90,14 @@ class GradeOptClient:
         raw_gar = guideline.get("Gar", "")
         clean_gar = self._purify_gar(raw_gar)
         gsr_principles, gsr_banding_rules = self._render_gsr_sections(guideline.get("Gsr", ""))
+        gar_banding_rules, gar_within_band_rules = self._render_gar_sections(raw_gar)
         return prompts.GRADER_PROMPT_TEMPLATE.format(
             Gqs=guideline.get("Gqs", ""),
             gsr_principles=gsr_principles,
             gsr_banding_rules=gsr_banding_rules,
             gar_rules=clean_gar,
+            gar_banding_rules=gar_banding_rules,
+            gar_within_band_rules=gar_within_band_rules,
             text=essay_text,
             max_score=guideline.get("max_score", 15),
             tier_count=guideline.get("tier_count", 5),
@@ -113,6 +116,18 @@ class GradeOptClient:
                 structured_gsr.banding_rules_text(),
             )
         return gsr_to_text(raw_gsr), ""
+
+    def _render_gar_sections(self, raw_gar):
+        if not raw_gar:
+            return "", ""
+        try:
+            structured_gar = gar_from_value(raw_gar)
+        except Exception:
+            return self._purify_gar(raw_gar), ""
+        return (
+            structured_gar.banding_rules_text(),
+            structured_gar.within_band_scoring_rules_text(),
+        )
 
     def get_ordinal_score(self, essay_text, guideline, true_score=None):
         user_prompt = self._build_grader_prompt(essay_text, guideline)

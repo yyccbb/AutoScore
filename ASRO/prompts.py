@@ -305,6 +305,7 @@ Return only one valid JSON object with this shape:
 Requirements:
 - Split the rubric into general_principles and canonical_bands.
 - general_principles must contain every scoring principle before the section that states requirements for each band.
+- Store general_principles as plain strings without leading numbering or bullets. For example, use "This question is worth 15 points in total..." rather than "1. This question is worth 15 points in total...".
 - canonical_bands must contain exactly six bands: 5, 4, 3, 2, 1, and 0.
 - Use integer band_number values and preserve the rubric's band order.
 - Copy each numeric lower and upper score boundary exactly.

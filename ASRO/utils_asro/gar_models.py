@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,21 @@ _BAND_NAMES = {
     1: "First Band",
     0: "0 points",
 }
+
+
+_LEADING_NUMBERING_RE = re.compile(
+    r"^\s*(?:\d+|[IVXLCDM]+|[一二三四五六七八九十]+)[\.\)、:：]\s*",
+    flags=re.IGNORECASE,
+)
+
+
+def _strip_leading_numbering(value):
+    text = str(value).strip()
+    previous = None
+    while text and text != previous:
+        previous = text
+        text = _LEADING_NUMBERING_RE.sub("", text).strip()
+    return text
 
 
 def _string_rule_map(value, band_number, prefix):
@@ -82,12 +98,14 @@ class CanonicalBand:
             return f"{self.minimum_score} points"
         return f"{self.minimum_score}-{self.maximum_score} points"
 
-    def to_text(self):
+    def header_text(self, prefix=""):
         label = _BAND_NAMES.get(self.band_number, f"Band {self.band_number}")
         if self.band_number == 0:
-            lines = [label]
-        else:
-            lines = [f"{label} ({self.score_range_text()})"]
+            return f"{prefix}{label}:"
+        return f"{prefix}{label} ({self.score_range_text()}):"
+
+    def to_text(self):
+        lines = [self.header_text()]
         for idx, rule in enumerate(self.broad_tiering_rules.values(), start=1):
             lines.append(f"{idx}. {rule}")
         return "\n".join(lines).strip()
@@ -212,6 +230,37 @@ class GAR:
     def to_json(self):
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
 
+    def banding_rules_text(self):
+        ordered_bands = sorted(
+            self.canonical_bands,
+            key=lambda band: band.band_number,
+            reverse=True,
+        )
+        return "\n\n".join(
+            _format_band_rules(
+                band,
+                band.broad_tiering_rules,
+                empty_message="Currently no rules.",
+            )
+            for band in ordered_bands
+        ).strip()
+
+    def within_band_scoring_rules_text(self):
+        ordered_bands = sorted(
+            self.canonical_bands,
+            key=lambda band: band.band_number,
+            reverse=True,
+        )
+        return "\n\n".join(
+            _format_band_rules(
+                band,
+                band.within_band_scoring_rules,
+                header_prefix="Within ",
+                empty_message="Currently no rules.",
+            )
+            for band in ordered_bands
+        ).strip()
+
 
 def gar_from_value(value):
     if isinstance(value, GAR):
@@ -231,7 +280,11 @@ class GSR:
     canonical_bands: list[CanonicalBand] = field(default_factory=list)
 
     def __post_init__(self):
-        self.general_principles = [str(item) for item in self.general_principles]
+        self.general_principles = [
+            _strip_leading_numbering(item)
+            for item in self.general_principles
+            if _strip_leading_numbering(item)
+        ]
         self.canonical_bands = [
             band if isinstance(band, CanonicalBand) else CanonicalBand.from_dict(band)
             for band in self.canonical_bands
@@ -316,3 +369,15 @@ def gsr_to_text(value):
 
 def gsr_to_json(value):
     return gsr_from_value(value).to_json()
+
+
+def _format_band_rules(band, rules, header_prefix="", empty_message=None):
+    lines = [band.header_text(prefix=header_prefix)]
+    if rules:
+        lines.extend(
+            f"{idx}. {rule}"
+            for idx, rule in enumerate(rules.values(), start=1)
+        )
+    elif empty_message:
+        lines.append(empty_message)
+    return "\n".join(lines).strip()
