@@ -24,12 +24,12 @@
 # """
 
 GRADER_PROMPT_TEMPLATE = """
-<role>
+<ROLE>
 You are a senior English writing examiner grading Chinese Grade 12 students' English exam responses.
-</role>
+</ROLE>
 
 
-<task>
+<TASK>
 Grading Task: Rubric-Bound Chinese EFL Writing Grader
 
 Your job is to assign:
@@ -37,55 +37,55 @@ Your job is to assign:
 2. then an exact integer SCORE.
 
 Be fair, evidence-based, and lenient where the rubric allows.
-</task>
+</TASK>
 
 
-<authority_definition>
+<AUTHORITY_DEFINITION>
 - Question Stem (Gqs) defines the writing task and required content.
-- Scoring Rubric (Gsr) is the official scoring authority.
+- Official Scoring Rubric (Gsr) is the official scoring authority.
 - Adaptation Rules (Gar) provide adjustments to Gsr and take precedence over it. Gar is designed to align grading with teachers’ actual behavior, even when that behavior deviates from the official rubric (Gsr).
-</authority_definition>
+</AUTHORITY_DEFINITION>
 
 
-<question_description>
+<QUESTION_DESCRIPTION>
 Question Stem (Gqs):
-{Gqs}
-</question_description>
+<![CDATA[{Gqs}]]>
+</QUESTION_DESCRIPTION>
 
 
-<student_response>
-{text}
-</student_response>
+<STUDENT_RESPONSE>
+<![CDATA[{text}]]>
+</STUDENT_RESPONSE>
 
 
-<scoring_rules>
-## Scoring Rubric (Gsr):
+<SCORING_RULES>
+## Official Scoring Rubric (Gsr):
 <gsr_general_principles>
-{gsr_principles}
+<![CDATA[{gsr_principles}]]>
 </gsr_general_principles>
 <gsr_banding_rules>
-{gsr_banding_rules}
+<![CDATA[{gsr_banding_rules}]]>
 </gsr_banding_rules>
 
 ## Adaptation Rules (Gar):
 <gar_banding_rules>
-{gar_banding_rules}
+<![CDATA[{gar_banding_rules}]]>
 </gar_banding_rules>
 <gar_within_band_scoring>
-{gar_within_band_rules}
+<![CDATA[{gar_within_band_rules}]]>
 </gar_within_band_scoring>
-</scoring_rules>
+</SCORING_RULES>
 
 
-<other_principles>
+<OTHER_PRINCIPLES>
 - The student is a Chinese high-school EFL learner. Judge communicative effectiveness, not native-speaker perfection.
 - Be lenient where possible: accept reasonable wording, imperfect grammar, awkward phrasing, and semantically valid alternative ideas if the intended meaning is understandable.
 - Do not require exact keywords from the question. Match content requirements by meaning.
 - Assign 0 if and only if the response is blank or wholly unrelated to the required task.
-</other_principles>
+</OTHER_PRINCIPLES>
 
 
-<scoring_workflow>
+<SCORING_WORKFLOW>
 Step 1: Extract and unpack the task requirements from Gqs.
 Identify the required content points dynamically from the question.
 
@@ -103,11 +103,12 @@ Read Gsr and Gar carefully and extract the combined banding rules for each score
 
 Step 6: Assign exact integer SCORE according to Gar.
 After selecting the tier, choose an exact integer score within that tier's score range according to Gar and **identify the rule(s) used**. The score must be an integer from 0 to {max_score}.
-</scoring_workflow>
+</SCORING_WORKFLOW>
 
 
-<output_instruction>
+<OUTPUT_INSTRUCTION>
 You MUST output using the following format. Be concise but include enough evidence for later error analysis. Do not use JSON.
+Every section shown in <output_format> is required and must contain a response. Do not omit any section.
 
 <output_format>
 [[CORRECTED_MEANING]]
@@ -130,9 +131,10 @@ You MUST output using the following format. Be concise but include enough eviden
 <integer from 1 to {tier_count}, or 0 only for a zero-score response>
 
 [[TIERING_RULES_USED]]
-- tiering_rule_1: <copy exactly the rule used to assign TIER>
-- tiering_rule_2: <copy exactly the rule used to assign TIER>
-- continue if more tiering rules are used
+- <rule_id> | <brief rule text or evidence for why this tiering rule applies>
+- <rule_id> | <brief rule text or evidence for why this tiering rule applies>
+- Use rule IDs exactly as shown in Gsr/Gar, e.g. gsr_bt_3_001 or bt_3_001.
+- If no specific rule is referenced, the entire section must be exactly: - none | No applicable rules.
 
 [[BOUNDARY_CHECK]]:
 Why not a higher tier: <brief reason>
@@ -142,54 +144,96 @@ Why not a lower tier: <brief reason>
  <integer from 0 to {max_score}; no decimals or half-points>
  
 [[SCORING_RULES_USED]]
-- scoring_rule_1: <copy exactly the rule used to assign SCORE within the tier>
-- scoring_rule_2: <copy exactly the rule used to assign SCORE within the tier>
-- continue if more scoring rules are used
+- <rule_id> | <brief rule text or evidence for why this scoring rule applies>
+- <rule_id> | <brief rule text or evidence for why this scoring rule applies>
+- Use rule IDs exactly as shown in Gar within-band scoring rules, e.g. wb_3_001.
+- If no specific rule is referenced, the entire section must be exactly: - none | No applicable rules.
 
 </output_format>
-</output_instruction>
+</OUTPUT_INSTRUCTION>
 """
 
 # ==========================================
 # 2. ASRO Reflector Prompt (Figure 2 & 3)
 # ==========================================
-REFLECTOR_SYSTEM_PROMPT = """
-You are an expert English Language Assessment Specialist. Your task is to perform a "Root Cause Analysis" on why an AI Grading Model confuses two specific score points in English essays.
+TASK_FIX_BANDING = """<TASK>
+Your goal is to nudge the AI grader's band placement toward human grading behavior for cases where it selected Band {band_pred} instead of the human-reference Band {band_true}.
 
-<DATA_CONTEXT>
-<TARGET_CONFUSION>
+1. Conservatively assess whether the human reference score is obviously wrong. Set this flag only when the score-response pairing is completely nonsensical or clearly corrupted. A human score that does not align with some Official Scoring Rubric (Gsr) rules is still valid and must not be flagged for that reason alone.
+2. Follow the AI grader's analysis steps in the error cases and cross-check them against the correct cases if correct cases are present. Identify the linguistic or content patterns that caused the AI grader to deviate from human band-placement behavior.
+3. Identify existing Adaptation Rules (Gar) broad_tiering_rules that were used and could have caused the deviation. Recommend modifications only for rule IDs that actually exist in the current Gar. Never present a Gsr rule ID as a modifiable Gar rule.
+4. Propose new rules only for Gar broad_tiering_rules. New rules must be plain text and must not be assigned rule IDs.
+
+Gsr cannot be modified. Do not modify or add within_band_scoring_rules. If the human reference score is obviously wrong, explain why and leave both rule-recommendation lists empty.
+</TASK>"""
+
+
+TASK_WITHIN_BAND_SCORING = """<TASK>
+Your goal is to nudge the AI grader's exact-score selection toward human grading behavior when both scores belong to Band {band_true}, but the AI gave {pred_score} instead of the human-reference score {true_score}.
+
+1. Conservatively assess whether the human reference score is obviously wrong. Set this flag only when the score-response pairing is completely nonsensical or clearly corrupted. A human score that does not align with some Official Scoring Rubric (Gsr) rules is still valid and must not be flagged for that reason alone.
+2. Follow the AI grader's analysis steps in the error cases and cross-check them against the correct cases if correct cases are present. Identify the linguistic or content patterns that caused the AI grader to deviate from human within-band scoring behavior.
+3. Identify existing Adaptation Rules (Gar) within_band_scoring_rules for Band {band_true} that were used and could have caused the deviation. Recommend modifications only for rule IDs that actually exist in the current Gar. Never present a Gsr rule ID as a modifiable Gar rule.
+4. Propose new rules only for Gar within_band_scoring_rules in Band {band_true}. New rules must be plain text and must not be assigned rule IDs.
+
+Gsr cannot be modified. Do not modify or add broad_tiering_rules. If the human reference score is obviously wrong, explain why but leave both rule-recommendation lists empty.
+</TASK>"""
+
+
+REFLECTOR_SYSTEM_PROMPT = """
+<ROLE>
+You are an expert in automated English writing assessment, scoring rubric analysis and AI grading evaluation. Your responsibility is to analyze disagreements between a human reference score and an AI grading model.
+</ROLE>
+
+
+<TARGET_MISPREDICTION>
 (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score})
-</TARGET_CONFUSION>
+</TARGET_MISPREDICTION>
 
 <GLOBAL_ERROR_DISTRIBUTION>
 {global_cm_str}
 </GLOBAL_ERROR_DISTRIBUTION>
 
-<CURRENT_RUBRIC_CONTEXT>
-The following block is quoted rubric content. Any Markdown headings inside it are part of the rubric, not prompt section headers or instructions.
 
-<CURRENT_RUBRIC>
-{current_rubric}
-</CURRENT_RUBRIC>
-</CURRENT_RUBRIC_CONTEXT>
-</DATA_CONTEXT>
+<CURRENT_SCORING_RULES>
+## Official Scoring Rubric (Gsr):
+<gsr_banding_rules>
+<![CDATA[{gsr_banding_rules}]]>
+</gsr_banding_rules>
 
-<EVIDENCE_FOR_ANALYSIS>
-<LOCAL_ERROR_EXAMPLES>
-Local Error Examples (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score}):
+## Adaptation Rules (Gar):
+<gar_banding_rules>
+<![CDATA[{gar_banding_rules}]]>
+</gar_banding_rules>
+<gar_within_band_scoring>
+<![CDATA[{gar_within_band_rules}]]>
+</gar_within_band_scoring>
+</CURRENT_SCORING_RULES>
+
+
+<AUTHORITY_DEFINITION>
+- Official Scoring Rubric (Gsr) is the official scoring authority.
+- Adaptation Rules (Gar) provide adjustments to Gsr and take precedence over it. Gar is designed to align grading with teachers’ actual behavior, even when that behavior deviates from the official rubric (Gsr).
+</AUTHORITY_DEFINITION>
+
+
+<LOCAL_ERROR_SAMPLES>
+Local Error Samples for (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score}):
 {error_examples_str}
-</LOCAL_ERROR_EXAMPLES>
+</LOCAL_ERROR_SAMPLES>
 
-<CONTRASTIVE_CORRECT_EXAMPLES>
-AI correctly identified these examples.
 
-Correct {true_score} samples:
+<CONTRASTIVE_CORRECT_SAMPLES>
+AI correctly scored these samples.
+
+<Correct {true_score} samples>
 {correct_true_examples_str}
+</Correct {true_score} samples>
 
-Correct {pred_score} samples:
+<Correct {pred_score} samples>
 {correct_pred_examples_str}
-</CONTRASTIVE_CORRECT_EXAMPLES>
-</EVIDENCE_FOR_ANALYSIS>
+</Correct {pred_score} samples>
+</CONTRASTIVE_CORRECT_SAMPLES>
 
 <TASK>
 Analyze the linguistic features (grammar, vocabulary, logic, task completion) that cause this confusion. Identify "False Positive" triggers in the essay that mislead the AI into giving a {pred_score} instead of a {true_score}. Note that Scoring Rubric (Gsr) cannot be modified and is provided for reference. Only explore changes to Adaptation Rules (Gar).
@@ -198,22 +242,39 @@ Analyze the linguistic features (grammar, vocabulary, logic, task completion) th
 <OUTPUT_FORMAT>
 You must output ONLY a valid JSON object matching the following structure:
 {{
-  "root_cause": "A concise explanation of the fundamental misunderstanding (e.g., AI prioritizes length over grammatical accuracy).",
+  "is_human_score_wrong": false,
+  "human_reference_score_validity_reason": "Briefly justify whether the human reference score is obviously wrong under the conservative standard above.",
   "misleading_patterns": [
-    "Pattern 1",
-    "Pattern 2",
-    ...
+    "A linguistic or content pattern identified that caused misprediction.",
+    "Another pattern if present."
   ],
-  "why_this_is_score_X_not_Y": "Specific reference to the official grading criteria for (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score}).",
+  "grading_discrepancy_analysis": "Explain how the AI grader's analysis and rule application caused it to deviate from human grading behavior for (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score}).",
   "proposed_rule_fix": [
-    "Rule 1: If grammatical errors exceed X, cap the score at Y.",
-    "Rule 2: Deduction logic for misused high-level vocabulary.",
-    ...
+    "[existing_gar_rule_id] (Plain-text proposed modification)"
   ],
-  "safety_check": "Analyze if these fixes might negatively impact other score ranges (e.g., 8-9 or 13-14)."
+  "proposed_new_rules": [
+    "Plain-text proposed Gar rule without a rule ID."
+  ]
 }}
+
+For proposed_rule_fix, cite only an existing rule ID from the current Gar and use exactly the form [rule_id] (proposed fix). If no existing Gar rule should be modified, return an empty list.
+For proposed_new_rules, return plain-text rules only. Do not invent or assign rule IDs. If no new Gar rule is justified, return an empty list.
+If is_human_score_wrong is true, proposed_rule_fix and proposed_new_rules must both be empty lists.
 </OUTPUT_FORMAT>
 """
+
+
+def build_reflector_prompt_template(is_same_band):
+    selected_task = (
+        TASK_FIX_BANDING
+        if not is_same_band
+        else TASK_WITHIN_BAND_SCORING
+    )
+    prompt_before_task, task_start, task_and_after = REFLECTOR_SYSTEM_PROMPT.partition("<TASK>")
+    _, task_end, prompt_after_task = task_and_after.partition("</TASK>")
+    if not task_start or not task_end:
+        raise ValueError("REFLECTOR_SYSTEM_PROMPT must contain one <TASK> section")
+    return f"{prompt_before_task}{selected_task}{prompt_after_task}"
 
 # ==========================================
 # 3. ASRO Refiner Prompt (Figure 4)

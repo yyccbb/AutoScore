@@ -192,7 +192,6 @@ def _load_task_definition(json_path, dataset_name, target_q, translate_question_
     fallback = {
         "Gqs": "",
         "Gsr": "",
-        "Gar": "",
     }
     try:
         with open(json_path, "r", encoding="utf-8") as f:
@@ -335,7 +334,7 @@ def main():
         band
         for band in structured_gsr.canonical_bands
         if band.band_number != 0
-    ).to_dict()
+    )
     initial_G["max_score"] = max_score
     initial_G["tier_count"] = tier_count
 

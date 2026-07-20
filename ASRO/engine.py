@@ -23,7 +23,7 @@ finally:
         sys.path.insert(0, _path)
 
 from utils_asro.sampler import ASROSampler
-from utils_asro.gar_models import GAR, gar_to_json
+from utils_asro.gar_models import GAR, gar_from_value, gar_to_json
 from utils_asro.progress import log_progress
 from utils_asro.utils import print_round_dashboard, save_guideline, _legacy_cleanup, _score_to_tier
 
@@ -72,6 +72,8 @@ class ASROEngine:
             raise ValueError("initial_G must be a dict.")
         if "Gar" not in initial_G:
             raise ValueError("initial_G must contain a Gar field.")
+        if not isinstance(initial_G["Gar"], GAR):
+            raise ValueError("initial_G['Gar'] must be a GAR object.")
 
     def _coerce_valid_score(self, score, sample_id):
         try:
@@ -238,11 +240,27 @@ class ASROEngine:
                 p_current,
                 e_ij,
                 {"target_true_examples": e_plus_i, "target_pred_examples": e_plus_j},
-                safe_mode,
-                global_cm_str,
+                safe_mode, # TODO: needed or not since already p
+                global_cm_str, # TODO: type 'str' (HUMAN_REFERENCE_SCORE: 9.5 | MODEL_PREDICTED_SCORE: 8.0) (4pcs), (HUMAN_REFERENCE_SCORE: 10.5 | MODEL_PREDICTED_SCORE: 8.0) (3pcs)
                 curr_round=round_idx,
             )
             log_progress("reflector", "reflector step finished", round=round_idx, mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}")
+
+            skip_reason = None
+            if diag["is_human_score_wrong"]:
+                skip_reason = "human reference score flagged as wrong"
+            elif not diag["proposed_rule_fix"] and not diag["proposed_new_rules"]:
+                skip_reason = "reflector proposed no Gar changes"
+
+            if skip_reason:
+                log_progress(
+                    "refiner",
+                    "refiner skipped",
+                    round=round_idx,
+                    mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}",
+                    reason=skip_reason,
+                )
+                return None
 
             self.optimizer.stage = "refining"
             log_progress("refiner", "refiner step started", round=round_idx, mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}")
@@ -490,7 +508,7 @@ class ASROEngine:
     def priority_consolidate(self, mode_rules_pool, p_current):
         if not mode_rules_pool:
             log_progress("consolidate", "no candidates; keeping current Gar")
-            return p_current["Gar"]
+            return gar_from_value(p_current["Gar"])
 
         candidates = []
         for guideline in mode_rules_pool:
@@ -548,9 +566,9 @@ Output only one valid JSON object with exactly this top-level field:
         )
         if final_res:
             log_progress("consolidate", "LLM merge request finished", response_chars=len(final_res))
-            return GAR.from_json(_legacy_cleanup(final_res)).to_dict()
+            return GAR.from_json(_legacy_cleanup(final_res))
         log_progress("consolidate", "LLM merge returned empty response")
-        return p_current["Gar"]
+        return gar_from_value(p_current["Gar"])
 
     def _get_top_k_modes(self, results, k):
         matrix_size = int(round(self.max_score * 2)) + 1

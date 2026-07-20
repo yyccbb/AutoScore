@@ -57,6 +57,11 @@ class GradeOptClient:
         with self._request_lock:
             return next(self._request_counter)
 
+    def _escape_cdata(self, value):
+        if value is None:
+            return ""
+        return str(value).replace("]]>", "]]]]><![CDATA[>")
+
     def call_llm(self, prompt, is_reflector=True):
         target_model = self.model_reflector if is_reflector else self.grader_model
         role = "reflector" if is_reflector else "grader"
@@ -92,13 +97,13 @@ class GradeOptClient:
         gsr_principles, gsr_banding_rules = self._render_gsr_sections(guideline.get("Gsr", ""))
         gar_banding_rules, gar_within_band_rules = self._render_gar_sections(raw_gar)
         return prompts.GRADER_PROMPT_TEMPLATE.format(
-            Gqs=guideline.get("Gqs", ""),
-            gsr_principles=gsr_principles,
-            gsr_banding_rules=gsr_banding_rules,
-            gar_rules=clean_gar,
-            gar_banding_rules=gar_banding_rules,
-            gar_within_band_rules=gar_within_band_rules,
-            text=essay_text,
+            Gqs=self._escape_cdata(guideline.get("Gqs", "")),
+            gsr_principles=self._escape_cdata(gsr_principles),
+            gsr_banding_rules=self._escape_cdata(gsr_banding_rules),
+            gar_rules=self._escape_cdata(clean_gar),
+            gar_banding_rules=self._escape_cdata(gar_banding_rules),
+            gar_within_band_rules=self._escape_cdata(gar_within_band_rules),
+            text=self._escape_cdata(essay_text),
             max_score=guideline.get("max_score", 15),
             tier_count=guideline.get("tier_count", 5),
         )
@@ -305,6 +310,27 @@ class GradeOptClient:
         tags[tag_name] = value
         return value
 
+    def _validate_rules_used_tag(self, tags, tag_name):
+        if tag_name not in tags:
+            raise ValueError(f"Missing required grader tag: {tag_name}")
+
+        raw_value = str(tags[tag_name]).strip()
+        exact_fallback = "- none | No applicable rules."
+        if raw_value == exact_fallback:
+            return
+        if not raw_value:
+            raise ValueError(
+                f"{tag_name} must contain rule content or exactly: {exact_fallback}"
+            )
+        if re.fullmatch(
+            r"-?\s*(?:none\s*(?:\|\s*no\s+applicable\s+rules?\.?)?|no\s+applicable\s+rules?\.?)",
+            raw_value,
+            flags=re.IGNORECASE,
+        ):
+            raise ValueError(
+                f"{tag_name} no-rule fallback must be exactly: {exact_fallback}"
+            )
+
     def _parse_marker_response(self, content, max_score=15, tier_count=5):
         max_score_int = int(float(max_score))
         tier_count_int = int(float(tier_count))
@@ -316,6 +342,8 @@ class GradeOptClient:
         tags = self._parse_marker_tags(content)
         score = self._parse_required_int_tag(tags, "SCORE", 0, max_score_int)
         tier = self._parse_required_int_tag(tags, "TIER", 0, tier_count_int)
+        self._validate_rules_used_tag(tags, "TIERING_RULES_USED")
+        self._validate_rules_used_tag(tags, "SCORING_RULES_USED")
 
         if score == 0 and tier != 0:
             raise ValueError(f"TIER must be 0 when SCORE is 0, got TIER={tier}")

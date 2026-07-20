@@ -34,15 +34,15 @@ def _string_rule_map(value, band_number, prefix):
         return {}
     if isinstance(value, dict):
         return {
-            str(rule_id): str(rule)
+            str(rule_id): _strip_leading_numbering(rule)
             for rule_id, rule in value.items()
         }
     if isinstance(value, list):
         return {
-            f"{prefix}_{band_number}_{idx:03d}": str(rule)
+            f"{prefix}_{band_number}_{idx:03d}": _strip_leading_numbering(rule)
             for idx, rule in enumerate(value, start=1)
         }
-    return {f"{prefix}_{band_number}_001": str(value)}
+    return {f"{prefix}_{band_number}_001": _strip_leading_numbering(value)}
 
 
 @dataclass
@@ -106,8 +106,7 @@ class CanonicalBand:
 
     def to_text(self):
         lines = [self.header_text()]
-        for idx, rule in enumerate(self.broad_tiering_rules.values(), start=1):
-            lines.append(f"{idx}. {rule}")
+        lines.extend(_format_rule_lines(self.broad_tiering_rules))
         return "\n".join(lines).strip()
 
 
@@ -374,10 +373,14 @@ def gsr_to_json(value):
 def _format_band_rules(band, rules, header_prefix="", empty_message=None):
     lines = [band.header_text(prefix=header_prefix)]
     if rules:
-        lines.extend(
-            f"{idx}. {rule}"
-            for idx, rule in enumerate(rules.values(), start=1)
-        )
+        lines.extend(_format_rule_lines(rules))
     elif empty_message:
         lines.append(empty_message)
     return "\n".join(lines).strip()
+
+
+def _format_rule_lines(rules):
+    return [
+        f"{idx}. [{rule_id}] {rule}"
+        for idx, (rule_id, rule) in enumerate(rules.items(), start=1)
+    ]
