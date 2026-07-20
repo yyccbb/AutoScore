@@ -279,56 +279,100 @@ def build_reflector_prompt_template(is_same_band):
 # ==========================================
 # 3. ASRO Refiner Prompt (Figure 4)
 # ==========================================
+TASK_REFINE_BANDING = """<TASK>
+Your goal is to convert the strongest reflector recommendations into localized Gar operations that reduce confusion between the human-reference Band {band_true} and the model-predicted Band {band_pred}.
+
+1. Consider only the recommendations in proposed_rule_fix and proposed_new_rules. Select at most two recommendations that are directly supported by the diagnosis and are more useful than the remaining candidates. If none is suitable, return no operations. Never invent a replacement recommendation.
+2. For a selected proposed_rule_fix, output a modify operation for broad_tiering_rules. Preserve its existing Gar rule ID, target the band that currently owns that rule, and provide the complete revised rule text rather than a partial edit.
+3. For a selected proposed_new_rules entry, output an add operation for broad_tiering_rules in the human-reference Band {band_true}. Set rule_id to null because rule IDs are assigned when operations are applied.
+4. You may polish a selected recommendation into clearer operational language, but you must preserve its meaning and must not combine it with unsupported ideas.
+5. For every operation, explain in reason why it is supported by the diagnosis and why it is more suitable than the recommendations that were not selected.
+
+Gsr is immutable. Do not output within_band_scoring_rules operations, rewrite the full Gar, redo the reflector's diagnosis, or introduce recommendations that the reflector did not provide.
+</TASK>"""
+
+
+TASK_REFINE_WITHIN_BAND_SCORING = """<TASK>
+Your goal is to convert the strongest reflector recommendation into one localized Gar operation that improves exact-score selection within the human-reference Band {band_true}, where the model gave {pred_score} instead of {true_score}.
+
+1. Consider only the recommendations in proposed_rule_fix and proposed_new_rules. Select at most one recommendation that is directly supported by the diagnosis and is more useful than the remaining candidates. If none is suitable, return no operations. Never invent a replacement recommendation.
+2. For a selected proposed_rule_fix, output a modify operation for within_band_scoring_rules in Band {band_true}. Preserve its existing Gar rule ID and provide the complete revised rule text rather than a partial edit.
+3. For a selected proposed_new_rules entry, output an add operation for within_band_scoring_rules in Band {band_true}. Set rule_id to null because rule IDs are assigned when operations are applied.
+4. You may polish a selected recommendation into clearer operational language, but you must preserve its meaning and must not combine it with unsupported ideas.
+5. For the operation, explain in reason why it is supported by the diagnosis and why it is more suitable than the recommendations that were not selected.
+
+Gsr is immutable. Do not output broad_tiering_rules operations, rewrite the full Gar, redo the reflector's diagnosis, or introduce recommendations that the reflector did not provide.
+</TASK>"""
+
+
 REFINER_SYSTEM_PROMPT = """
-You are a Senior Rubric Architect. Your goal is to rewrite specific sections of a structured English Essay Grading GAR to eliminate confusion between score points.
+<ROLE>
+You are a conservative Adaptation Rules (Gar) refiner for automated English writing assessment. Your responsibility is to select the strongest recommendations from the reflector diagnosis and translate each selected recommendation into one precise, localized Gar operation. Treat the Official Scoring Rubric (Gsr) as immutable and the current Gar as the editing baseline. Do not redo the diagnosis or invent unsupported fixes.
+</ROLE>
 
-### INPUT DATA
-1. **Current Rubric**: 
-{current_rubric}
-2. **Reflector's Diagnosis (The Problem)**: 
-{diagnosis_json}
-3. **Error Examples (Evidence)**: 
-{error_examples_str}
-4. **Cross-Mode Awareness (Potential Conflicts)**: 
-{other_modes_context}
+<TARGET_MISPREDICTION>
+(HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score})
+</TARGET_MISPREDICTION>
 
-### CONSTRAINTS
-- **Targeted Fix**: Specifically resolve the (HUMAN_REFERENCE_SCORE: {true_score} | MODEL_PREDICTED_SCORE: {pred_score}) confusion.
-- **Edit Budget**: Medium (Add 2-3 precise rules or modify 1-2 existing criteria).
-- **Safety**: Ensure new rules do not conflict with the logic for other error modes like {other_modes_str}.
-- **Clarity**: Use concrete linguistic markers (e.g., "If more than 3 verb tense errors...", "If transition words are used but ideas are repetitive...").
-- **Structure**: Preserve the GAR object with canonical_bands as the only top-level field. Keep each band's band_number and score bounds unchanged.
-- **Band Rule Storage**: Store broad_tiering_rules and within_band_scoring_rules inside the matching canonical band object.
-- **Rule IDs**: Use stable string rule IDs as dictionary keys, e.g. "bt_5_001" for Band 5 broad-tiering rules and "wb_5_001" for Band 5 within-band scoring rules. Preserve existing rule IDs when modifying existing rules.
-- **Complete Output**: The schema example below is abbreviated. Return every existing canonical band and preserve every existing rule ID unless replacing that rule.
-- **Ground-Truth Targeting**: Put band-placement guidance in a band's broad_tiering_rules and exact-score guidance in a band's within_band_scoring_rules to match the human reference scores directly.
+<CURRENT_SCORING_RULES>
+## Official Scoring Rubric (Gsr):
+<gsr_banding_rules>
+<![CDATA[{gsr_banding_rules}]]>
+</gsr_banding_rules>
 
-### OUTPUT FORMAT
-You must output ONLY a valid JSON object with the following keys:
+## Adaptation Rules (Gar):
+<gar_banding_rules>
+<![CDATA[{gar_banding_rules}]]>
+</gar_banding_rules>
+<gar_within_band_scoring>
+<![CDATA[{gar_within_band_rules}]]>
+</gar_within_band_scoring>
+</CURRENT_SCORING_RULES>
+
+<AUTHORITY_DEFINITION>
+- Official Scoring Rubric (Gsr) is the official scoring authority and it can NEVER be modified.
+- Adaptation Rules (Gar) provide adjustments to Gsr and take precedence over it. Gar is designed to align grading with teachers’ actual behavior, even when that behavior deviates from the official rubric (Gsr).
+</AUTHORITY_DEFINITION>
+
+<REFLECTOR_DIAGNOSIS>
+<![CDATA[{diagnosis_json}]]>
+</REFLECTOR_DIAGNOSIS>
+
+<TASK>
+Select the strongest reflector recommendations and translate them into structured Gar operations.
+</TASK>
+
+<OUTPUT_FORMAT>
+You must output ONLY one valid JSON object with exactly one top-level key, operations. Every operation must contain exactly the six fields shown below:
 {{
-  "refined_segment_title": "The specific score category being modified (e.g., 'Criteria for Score 10-12').",
-  "new_rules_added": [
-    "Rule 1: ...",
-    "Rule 2: ..."
-  ],
-  "modified_descriptions": [
-    "Original: '...', Updated: '...'"
-  ],
-  "integration_strategy": "How these changes should be merged into the structured GAR.",
-  "full_refined_rubric": {{
-    "canonical_bands": [
-      {{
-        "band_number": 5,
-        "minimum_score": 13,
-        "maximum_score": 15,
-        "broad_tiering_rules": {{"bt_5_001": "rule text"}},
-        "within_band_scoring_rules": {{"wb_5_001": "rule text"}}
-      }}
-    ]
-  }},
-  "cross_mode_safety_justification": "Explanation of why these changes won't break the scoring for {other_modes_str}."
+  "operations": [
+    {{
+      "operation": "modify",
+      "section": "broad_tiering_rules",
+      "band_number": 4,
+      "rule_id": "bt_4_001",
+      "content": "Complete revised rule text.",
+      "reason": "Why this recommendation was selected over the alternatives."
+    }}
+  ]
 }}
+
+operation must be either add or modify. section must be either broad_tiering_rules or within_band_scoring_rules as required by the selected task. band_number must be an integer from 1 through 5. content and reason must be non-empty strings. A modify operation must preserve an existing Gar rule_id. An add operation must use null for rule_id. Return an empty operations list when no supplied recommendation is suitable.
+</OUTPUT_FORMAT>
 """
+
+
+def build_refiner_prompt_template(is_same_band):
+    selected_task = (
+        TASK_REFINE_WITHIN_BAND_SCORING
+        if is_same_band
+        else TASK_REFINE_BANDING
+    )
+    prompt_before_task, task_start, task_and_after = REFINER_SYSTEM_PROMPT.partition("<TASK>")
+    _, task_end, prompt_after_task = task_and_after.partition("</TASK>")
+    if not task_start or not task_end:
+        raise ValueError("REFINER_SYSTEM_PROMPT must contain one <TASK> section")
+    return f"{prompt_before_task}{selected_task}{prompt_after_task}"
 
 
 GSR_EXTRACTION_PROMPT = """

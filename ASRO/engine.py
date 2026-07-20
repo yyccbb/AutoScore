@@ -222,6 +222,7 @@ class ASROEngine:
     def _process_single_mode(self, mode, p_current, scan_results, global_cm_str, round_idx=1):
         try:
             safe_mode = tuple(int(x) for x in mode)
+            # TODO: compute tier here and pass into each step
             e_ij = [r for r in scan_results if self._is_mode(r, safe_mode)]
             e_plus_i, e_plus_j = self._get_contrastive_examples(scan_results, safe_mode) # Issue: both are empty
             log_progress(
@@ -261,6 +262,8 @@ class ASROEngine:
                     reason=skip_reason,
                 )
                 return None
+            diag.pop("is_human_score_wrong")
+            diag.pop("human_reference_score_validity_reason")
 
             self.optimizer.stage = "refining"
             log_progress("refiner", "refiner step started", round=round_idx, mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}")

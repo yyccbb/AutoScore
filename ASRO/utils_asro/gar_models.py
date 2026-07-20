@@ -1,7 +1,6 @@
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any
 
 
 _BAND_NAMES = {
@@ -167,18 +166,68 @@ class GarBand(CanonicalBand):
 class RefinerOperation:
     operation: str
     section: str
-    content: Any
-    band_number: int | None = None
+    band_number: int
+    content: str
+    reason: str
     rule_id: str | None = None
+
+    def __post_init__(self):
+        if self.operation not in {"add", "modify"}:
+            raise ValueError("refiner operation must be 'add' or 'modify'")
+        if self.section not in {
+            "broad_tiering_rules",
+            "within_band_scoring_rules",
+        }:
+            raise ValueError(
+                "refiner operation section must be broad_tiering_rules or "
+                "within_band_scoring_rules"
+            )
+        if type(self.band_number) is not int or not 1 <= self.band_number <= 5:
+            raise ValueError("refiner operation band_number must be an integer from 1 to 5")
+        if not isinstance(self.content, str) or not self.content.strip():
+            raise ValueError("refiner operation content must be a non-empty string")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("refiner operation reason must be a non-empty string")
+
+        self.content = self.content.strip()
+        self.reason = self.reason.strip()
+        if self.operation == "add":
+            if self.rule_id is not None:
+                raise ValueError("add operations must use a null rule_id")
+        elif not isinstance(self.rule_id, str) or not self.rule_id.strip():
+            raise ValueError("modify operations must provide a non-empty rule_id")
+        else:
+            self.rule_id = self.rule_id.strip()
 
     @classmethod
     def from_dict(cls, data):
+        if not isinstance(data, dict):
+            raise ValueError("refiner operation must be a JSON object")
+        expected_keys = {
+            "operation",
+            "section",
+            "band_number",
+            "rule_id",
+            "content",
+            "reason",
+        }
+        actual_keys = set(data)
+        if actual_keys != expected_keys:
+            missing_keys = sorted(expected_keys - actual_keys)
+            unexpected_keys = sorted(actual_keys - expected_keys)
+            details = []
+            if missing_keys:
+                details.append(f"missing keys: {', '.join(missing_keys)}")
+            if unexpected_keys:
+                details.append(f"unexpected keys: {', '.join(unexpected_keys)}")
+            raise ValueError("invalid refiner operation fields: " + "; ".join(details))
         return cls(
-            operation=str(data["operation"]),
-            section=str(data["section"]),
-            band_number=int(data["band_number"]) if data.get("band_number") is not None else None,
-            rule_id=str(data["rule_id"]) if data.get("rule_id") is not None else None,
+            operation=data["operation"],
+            section=data["section"],
+            band_number=data["band_number"],
             content=data["content"],
+            reason=data["reason"],
+            rule_id=data["rule_id"],
         )
 
     def to_dict(self):
@@ -188,6 +237,7 @@ class RefinerOperation:
             "band_number": self.band_number,
             "rule_id": self.rule_id,
             "content": self.content,
+            "reason": self.reason,
         }
 
     @classmethod

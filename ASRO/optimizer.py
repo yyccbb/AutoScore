@@ -1,7 +1,7 @@
 import json
 import re
 
-from utils_asro.gar_models import GAR, gar_from_value, gar_to_json, gsr_from_value, gsr_to_text
+from utils_asro.gar_models import RefinerOperation, gar_from_value, gar_to_json, gsr_from_value, gsr_to_text
 from utils_asro.progress import log_progress
 
 COMMON_REFLECTOR_ANALYSIS_TAGS = (
@@ -163,46 +163,80 @@ class GradeOptimizer:
                 raw_response=getattr(exc, "raw_response", None),
             ) from exc
 
-    def refiner_step(self, g_k, diagnosis_json, other_modes_list, mode_pair, curr_round=1, **payload):
-        t_score = mode_pair[0] / 2.0
-        p_score = mode_pair[1] / 2.0
-        other_modes_str = ", ".join(
-            [
-                f"(HUMAN_REFERENCE_SCORE: {m[0] / 2.0} | "
-                f"MODEL_PREDICTED_SCORE: {m[1] / 2.0})"
-                for m in other_modes_list
-            ]
+    def refiner_step(
+        self,
+        current_rubric,
+        diagnosis_json,
+        other_modes_list,
+        mode_pair,
+        curr_round=1,
+        **payload,
+    ) -> list[RefinerOperation]:
+        score_true = mode_pair[0] / 2.0
+        score_pred = mode_pair[1] / 2.0
+        structured_gsr = gsr_from_value(current_rubric["Gsr"])
+        structured_gar = gar_from_value(current_rubric["Gar"])
+        band_true = next(
+            band.band_number
+            for band in structured_gsr.canonical_bands
+            if band.minimum_score <= score_true <= band.maximum_score
         )
+        band_pred = next(
+            band.band_number
+            for band in structured_gsr.canonical_bands
+            if band.minimum_score <= score_pred <= band.maximum_score
+        )
+        is_same_band = band_true == band_pred
 
-        from prompts import REFINER_SYSTEM_PROMPT
+        from prompts import build_refiner_prompt_template
 
-        user_prompt = REFINER_SYSTEM_PROMPT.format(
-            current_rubric=gar_to_json(g_k["Gar"]),
+        prompt_template = build_refiner_prompt_template(is_same_band)
+        user_prompt = prompt_template.format(
             diagnosis_json=json.dumps(diagnosis_json, indent=2, ensure_ascii=False),
-            error_examples_str="[See provided analysis]",
-            other_modes_context=f"Warning: Conflicts may arise with: {other_modes_str}",
-            true_score=t_score,
-            pred_score=p_score,
-            other_modes_str=other_modes_str if other_modes_str else "None",
+            true_score=score_true,
+            pred_score=score_pred,
+            band_true=band_true,
+            band_pred=band_pred,
+            gsr_banding_rules=structured_gsr.banding_rules_text(),
+            gar_banding_rules=structured_gar.banding_rules_text(),
+            gar_within_band_rules=structured_gar.within_band_scoring_rules_text(),
         )
 
-        log_progress("refiner", "prompt prepared", round=curr_round, mode=f"{t_score}->{p_score}")
+        log_progress(
+            "refiner",
+            "prompt prepared",
+            round=curr_round,
+            mode=f"{score_true}->{score_pred}",
+        )
 
         try:
             raw_response, refiner_data = self._call_json_with_repair(
-                "You are a Senior Rubric Architect.",
+                "",
                 user_prompt,
                 mode_pair,
                 "refiner",
                 curr_round,
+                response_validator=lambda response: self._validate_refiner_operations(
+                    response,
+                    diagnosis_json,
+                    structured_gar,
+                    band_true,
+                    is_same_band,
+                ),
                 **payload,
             )
-            log_progress("refiner", "JSON patch parsed", round=curr_round, mode=f"{t_score}->{p_score}")
-
-            if isinstance(refiner_data, dict) and "full_refined_rubric" in refiner_data:
-                return GAR.from_dict(refiner_data["full_refined_rubric"])
-
-            raise ValueError("Refiner JSON does not contain full_refined_rubric")
+            operations = [
+                RefinerOperation.from_dict(operation)
+                for operation in refiner_data["operations"]
+            ]
+            log_progress(
+                "refiner",
+                "JSON operations parsed",
+                round=curr_round,
+                mode=f"{score_true}->{score_pred}",
+                operations=len(operations),
+            )
+            return operations
         except Exception as exc:
             raise OptimizerStepError(
                 f"Refiner failed for mode {mode_pair}: {exc}",
@@ -327,6 +361,143 @@ class GradeOptimizer:
             raise ValueError(
                 "proposed_rule_fix and proposed_new_rules must both be empty "
                 "when is_human_score_wrong is true"
+            )
+
+    def _validate_refiner_operations(
+        self,
+        response,
+        diagnosis,
+        structured_gar,
+        band_true,
+        is_same_band,
+    ):
+        if not isinstance(response, dict):
+            raise ValueError("Refiner response must be a JSON object")
+        if set(response) != {"operations"}:
+            missing = "operations" not in response
+            unexpected_keys = sorted(set(response) - {"operations"})
+            details = []
+            if missing:
+                details.append("missing key: operations")
+            if unexpected_keys:
+                details.append(f"unexpected keys: {', '.join(unexpected_keys)}")
+            raise ValueError("Refiner response has " + "; ".join(details))
+
+        operations_data = response["operations"]
+        if not isinstance(operations_data, list):
+            raise ValueError("Refiner operations must be a list")
+        maximum_operations = 1 if is_same_band else 2
+        if len(operations_data) > maximum_operations:
+            raise ValueError(
+                f"Refiner may return at most {maximum_operations} operation(s) "
+                "for this route"
+            )
+
+        if not isinstance(diagnosis, dict):
+            raise ValueError("Reflector diagnosis must be a JSON object")
+        proposed_rule_fixes = diagnosis.get("proposed_rule_fix", [])
+        proposed_new_rules = diagnosis.get("proposed_new_rules", [])
+        if not isinstance(proposed_rule_fixes, list):
+            raise ValueError("Reflector proposed_rule_fix must be a list")
+        if not isinstance(proposed_new_rules, list):
+            raise ValueError("Reflector proposed_new_rules must be a list")
+        if any(
+            not isinstance(rule, str) or not rule.strip()
+            for rule in proposed_new_rules
+        ):
+            raise ValueError(
+                "Reflector proposed_new_rules must contain only non-empty strings"
+            )
+
+        proposed_fix_rule_ids = set()
+        for proposed_fix in proposed_rule_fixes:
+            if not isinstance(proposed_fix, str):
+                raise ValueError(
+                    "Reflector proposed_rule_fix must contain only strings"
+                )
+            match = re.fullmatch(
+                r"\[([^\[\]]+)\]\s+\((.+)\)",
+                proposed_fix.strip(),
+                flags=re.DOTALL,
+            )
+            if not match or not match.group(2).strip():
+                raise ValueError(
+                    "Each reflector proposed_rule_fix entry must use "
+                    "[rule_id] (non-empty proposed fix)"
+                )
+            proposed_fix_rule_ids.add(match.group(1))
+
+        expected_section = (
+            "within_band_scoring_rules"
+            if is_same_band
+            else "broad_tiering_rules"
+        )
+        rule_owners = {}
+        ambiguous_rule_ids = set()
+        for band in structured_gar.canonical_bands:
+            rules = getattr(band, expected_section)
+            for rule_id in rules:
+                if rule_id in rule_owners:
+                    ambiguous_rule_ids.add(rule_id)
+                else:
+                    rule_owners[rule_id] = band.band_number
+
+        operations = [
+            RefinerOperation.from_dict(operation_data)
+            for operation_data in operations_data
+        ]
+        seen_modified_rule_ids = set()
+        add_count = 0
+        for operation in operations:
+            if operation.section != expected_section:
+                raise ValueError(
+                    f"Refiner operation section must be {expected_section} "
+                    "for this route"
+                )
+            if is_same_band and operation.band_number != band_true:
+                raise ValueError(
+                    f"Within-band operations must target Band {band_true}"
+                )
+
+            if operation.operation == "add":
+                add_count += 1
+                if operation.band_number != band_true:
+                    raise ValueError(
+                        f"New rules must target the human-reference Band {band_true}"
+                    )
+                continue
+
+            rule_id = operation.rule_id
+            if rule_id not in proposed_fix_rule_ids:
+                raise ValueError(
+                    f"Refiner modify operation was not proposed by the reflector: "
+                    f"{rule_id!r}"
+                )
+            if rule_id in seen_modified_rule_ids:
+                raise ValueError(
+                    f"Refiner cannot modify the same rule more than once: {rule_id!r}"
+                )
+            seen_modified_rule_ids.add(rule_id)
+            if rule_id in ambiguous_rule_ids:
+                raise ValueError(
+                    f"Gar rule ID is not uniquely owned by one band: {rule_id!r}"
+                )
+            owner_band = rule_owners.get(rule_id)
+            if owner_band is None:
+                raise ValueError(
+                    f"Refiner modify operation references an unavailable Gar rule "
+                    f"ID: {rule_id!r}"
+                )
+            if operation.band_number != owner_band:
+                raise ValueError(
+                    f"Gar rule {rule_id!r} belongs to Band {owner_band}, not "
+                    f"Band {operation.band_number}"
+                )
+
+        if add_count > len(proposed_new_rules):
+            raise ValueError(
+                "Refiner returned more add operations than reflector new-rule "
+                "recommendations"
             )
 
     def _call_json_with_repair(
