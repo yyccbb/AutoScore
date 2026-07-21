@@ -15,9 +15,12 @@ from utils.env import load_env
 load_env()
 
 from utils_asro.data_loader import GradeOptDataLoader
+from utils_asro.gar_models import GAR, GSR
 from utils_asro.progress import log_progress
+from utils_asro.utils import npx_converter
 from engine import ASROEngine
 from client import GradeOptClient
+import prompts as asro_prompts
 import utils.prompts as shared_prompts
 
 def load_yaml_config(config_path, section):
@@ -97,6 +100,35 @@ def _translate_question_rubric(question, rubric, translation_client):
     return _parse_translation_response(raw_response, require_question=bool(question.strip()))
 
 
+def _extract_structured_gsr(gsr, client):
+    if client is None:
+        raise ValueError("LLM client is required to parse GSR into structured form")
+    prompt = asro_prompts.GSR_EXTRACTION_PROMPT.format(gsr=gsr)
+    while True:
+        log_progress(
+            "guideline",
+            "extracting structured GSR",
+            model=getattr(client, "model_reflector", None),
+        )
+        raw_response = client.call_llm(prompt, is_reflector=True)
+        try:
+            text = _strip_json_fences(raw_response)
+            start = text.find("{")
+            if start < 0:
+                raise ValueError("No JSON object found in structured GSR response")
+            parsed, _ = json.JSONDecoder().raw_decode(text[start:])
+            structured_gsr = GSR.from_dict(parsed)
+            if [band.band_number for band in structured_gsr.canonical_bands] != [5, 4, 3, 2, 1, 0]:
+                raise ValueError("Structured GSR response must contain Bands 5, 4, 3, 2, 1, 0 in order")
+            return structured_gsr
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            log_progress(
+                "guideline",
+                "structured GSR response invalid; retrying",
+                error=exc,
+            )
+
+
 def _ensure_training_ocr(cfg, data_dir, json_path, dataset_name, target_q):
     if not cfg.get("ocr", cfg.get("ocr_before_train", False)):
         log_progress("ocr", "pre-training OCR skipped", enabled=False)
@@ -160,7 +192,6 @@ def _load_task_definition(json_path, dataset_name, target_q, translate_question_
     fallback = {
         "Gqs": "",
         "Gsr": "",
-        "Gar": "",
     }
     try:
         with open(json_path, "r", encoding="utf-8") as f:
@@ -196,6 +227,15 @@ def _load_task_definition(json_path, dataset_name, target_q, translate_question_
                     raise RuntimeError(
                         f"Failed to translate question/rubric for {dataset_name}/{target_q}"
                     ) from exc
+            try:
+                fallback["Gsr"] = _extract_structured_gsr(
+                    fallback["Gsr"],
+                    translation_client,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to parse GSR structure for {dataset_name}/{target_q}"
+                ) from exc
             return fallback
     raise ValueError(
         f"Missing subjective_question entry for {dataset_name}/{target_q}. "
@@ -289,6 +329,12 @@ def main():
         translate_question_rubric=translate_question_rubric,
         translation_client=client,
     )
+    structured_gsr = initial_G["Gsr"] if isinstance(initial_G["Gsr"], GSR) else GSR.from_dict(initial_G["Gsr"])
+    initial_G["Gar"] = GAR.from_bands(
+        band
+        for band in structured_gsr.canonical_bands
+        if band.band_number != 0
+    )
     initial_G["max_score"] = max_score
     initial_G["tier_count"] = tier_count
 
@@ -344,7 +390,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     output_filename = os.path.join(output_dir, f"optimized_guideline_Q{target_q}_T{T}_B{B}_K{K}_W{max_workers}_N{train_label}.json")
     with open(output_filename, "w", encoding="utf-8") as f:
-        json.dump(best_g, f, ensure_ascii=False, indent=2)
+        json.dump(best_g, f, ensure_ascii=False, indent=2, default=npx_converter)
     log_progress("complete", "optimized guideline saved", path=output_filename)
     
     print(f"🎊 优化完成！最佳评分规则已保存至: {output_filename}")

@@ -23,6 +23,7 @@ finally:
         sys.path.insert(0, _path)
 
 from utils_asro.sampler import ASROSampler
+from utils_asro.gar_models import GAR, RefinerOperation, gar_to_json
 from utils_asro.progress import log_progress
 from utils_asro.utils import print_round_dashboard, save_guideline, _legacy_cleanup, _score_to_tier
 
@@ -71,6 +72,8 @@ class ASROEngine:
             raise ValueError("initial_G must be a dict.")
         if "Gar" not in initial_G:
             raise ValueError("initial_G must contain a Gar field.")
+        if not isinstance(initial_G["Gar"], GAR):
+            raise ValueError("initial_G['Gar'] must be a GAR object.")
 
     def _coerce_valid_score(self, score, sample_id):
         try:
@@ -159,7 +162,7 @@ class ASROEngine:
         for result in results:
             true_idx = int(round(float(result["true"]) * 2))
             pred_idx = int(round(float(result["pred"]) * 2))
-            if true_idx == pred_idx:
+            if true_idx == pred_idx or abs(true_idx - pred_idx) == 1:
                 continue
 
             mode = (true_idx, pred_idx)
@@ -219,6 +222,7 @@ class ASROEngine:
     def _process_single_mode(self, mode, p_current, scan_results, global_cm_str, round_idx=1):
         try:
             safe_mode = tuple(int(x) for x in mode)
+            # TODO: compute tier here and pass into each step
             e_ij = [r for r in scan_results if self._is_mode(r, safe_mode)]
             e_plus_i, e_plus_j = self._get_contrastive_examples(scan_results, safe_mode) # Issue: both are empty
             log_progress(
@@ -237,21 +241,36 @@ class ASROEngine:
                 p_current,
                 e_ij,
                 {"target_true_examples": e_plus_i, "target_pred_examples": e_plus_j},
-                safe_mode,
-                global_cm_str,
+                safe_mode, # TODO: needed or not since already p
+                global_cm_str, # TODO: type 'str' (HUMAN_REFERENCE_SCORE: 9.5 | MODEL_PREDICTED_SCORE: 8.0) (4pcs), (HUMAN_REFERENCE_SCORE: 10.5 | MODEL_PREDICTED_SCORE: 8.0) (3pcs)
                 curr_round=round_idx,
             )
             log_progress("reflector", "reflector step finished", round=round_idx, mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}")
 
+            skip_reason = None
+            if diag["is_human_score_wrong"]:
+                skip_reason = "human reference score flagged as wrong"
+            elif not diag["proposed_rule_fix"] and not diag["proposed_new_rules"]:
+                skip_reason = "reflector proposed no Gar changes"
+
+            if skip_reason:
+                log_progress(
+                    "refiner",
+                    "refiner skipped",
+                    round=round_idx,
+                    mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}",
+                    reason=skip_reason,
+                )
+                return None
+            diag.pop("is_human_score_wrong")
+            diag.pop("human_reference_score_validity_reason")
+
             self.optimizer.stage = "refining"
             log_progress("refiner", "refiner step started", round=round_idx, mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}")
-            refined_gar = self.optimizer.refiner_step(p_current, diag, [], safe_mode, curr_round=round_idx)
+            refiner_operations = self.optimizer.refiner_step(p_current, diag, [], safe_mode, curr_round=round_idx)
             log_progress("refiner", "refiner step finished", round=round_idx, mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}")
 
-            p_new = copy.deepcopy(p_current)
-            p_new["Gar"] = refined_gar
-            p_new["target_mode"] = safe_mode
-            return p_new
+            return refiner_operations
         except Exception as exc:
             log_progress("mode", "mode repair failed", round=round_idx, mode=mode, error=exc)
             print(f"[WARN] Mode {mode} optimization failed: {exc}")
@@ -418,20 +437,49 @@ class ASROEngine:
 
             global_cm_str = self._generate_cm_report(scan_results)
             log_progress("modes", "confusion report generated", round=round_idx, report=global_cm_str or "none")
-            new_candidate_pool = []
+            new_candidate_pool: list[list[RefinerOperation]] = []
             optimizer_failed_results = []
             for mode in error_modes:
-                candidate = self._process_single_mode(mode, current_guideline, scan_results, global_cm_str, round_idx)
-                if candidate and candidate.get("failed"):
-                    optimizer_failed_results.append(candidate)
-                elif candidate:
-                    new_candidate_pool.append(candidate)
+                candidate_operations = self._process_single_mode(mode, current_guideline, scan_results, global_cm_str, round_idx)
+                if isinstance(candidate_operations, dict) and candidate_operations.get("failed"):
+                    optimizer_failed_results.append(candidate_operations)
+                elif candidate_operations:
+                    new_candidate_pool.append(candidate_operations)
+
+            tiering_operation_candidates: list[RefinerOperation] = []
+            within_band_operation_candidates: dict[int, list[RefinerOperation]] = {}
+            for candidate_operations in new_candidate_pool:
+                for operation in candidate_operations:
+                    if operation.section == "broad_tiering_rules":
+                        tiering_operation_candidates.append(operation)
+                    elif operation.section == "within_band_scoring_rules":
+                        within_band_operation_candidates.setdefault(
+                            operation.band_number,
+                            [],
+                        ).append(operation)
+                    else:
+                        raise ValueError(
+                            f"Unsupported RefinerOperation section: "
+                            f"{operation.section!r}"
+                        )
 
             p_full = copy.deepcopy(current_guideline)
             log_progress("consolidate", "priority consolidation started", round=round_idx, candidates=len(new_candidate_pool))
-            p_full["Gar"] = self.priority_consolidate(new_candidate_pool, current_guideline)
+            consolidated_operations = self.priority_consolidate(
+                tiering_operation_candidates,
+                within_band_operation_candidates,
+                current_guideline,
+            )
+            p_full["Gar"] = current_guideline["Gar"].apply_operations(
+                consolidated_operations
+            )
             p_full["target_mode"] = "FULL_REPAIR"
-            log_progress("consolidate", "priority consolidation finished", round=round_idx)
+            log_progress(
+                "consolidate",
+                "priority consolidation finished",
+                round=round_idx,
+                operations=len(consolidated_operations),
+            )
 
             validation_results = self.evaluate_validation_sequential(p_full, D_val)
             self._save_intermediate_records(round_idx, D_val, validation_results, is_validation=True)
@@ -486,51 +534,171 @@ class ASROEngine:
         log_progress("optimization", "ASRO optimization finished", best_misconf=best_overall_misconf)
         return best_guideline
 
-    def priority_consolidate(self, mode_rules_pool, p_current):
-        if not mode_rules_pool:
-            log_progress("consolidate", "no candidates; keeping current Gar")
-            return p_current.get("Gar", "")
+    def priority_consolidate(
+        self,
+        tiering_operations: list[RefinerOperation],
+        within_band_operations: dict[int, list[RefinerOperation]],
+        p_current,
+    ) -> list[RefinerOperation]:
+        candidate_operations = list(tiering_operations)
+        for band_number in sorted(within_band_operations):
+            candidate_operations.extend(within_band_operations[band_number])
 
-        candidates = []
-        for guideline in mode_rules_pool:
-            if not guideline:
-                continue
-            mode = guideline.get("target_mode", (0, 0))
-            candidates.append(
-                {
-                    "mode": f"{mode[0] / 2.0} -> {mode[1] / 2.0}",
-                    "content": guideline.get("Gar", ""),
-                }
+        if not candidate_operations:
+            log_progress("consolidate", "no operation candidates")
+            return []
+
+        def escape_cdata(value):
+            return str(value).replace("]]>", "]]]]><![CDATA[>")
+
+        tiering_operations_json = json.dumps(
+            [operation.to_dict() for operation in tiering_operations],
+            indent=2,
+            ensure_ascii=False,
+        )
+        within_band_operations_xml = "\n".join(
+            (
+                f'<BAND number="{band_number}">\n'
+                f'<![CDATA[{escape_cdata(json.dumps([operation.to_dict() for operation in operations], indent=2, ensure_ascii=False))}]]>\n'
+                f'</BAND>'
+            )
+            for band_number, operations in sorted(within_band_operations.items())
+        ) or "<NONE />"
+
+        from prompts import PRIORITY_CONSOLIDATE_PROMPT
+
+        base_prompt = PRIORITY_CONSOLIDATE_PROMPT.format(
+            current_gar=escape_cdata(gar_to_json(p_current["Gar"])),
+            tiering_operations_json=escape_cdata(tiering_operations_json),
+            within_band_operations_xml=within_band_operations_xml,
+        )
+        current_prompt = base_prompt
+        attempt = 0
+
+        while True:
+            attempt += 1
+            log_progress(
+                "consolidate",
+                "LLM operation consolidation started",
+                candidates=len(candidate_operations),
+                attempt=attempt,
+            )
+            raw_response = self._call_llm_compat(
+                "",
+                current_prompt,
+                is_reflector=True,
+            )
+            try:
+                response = json.loads(_legacy_cleanup(raw_response))
+                consolidated_operations = self._validate_consolidated_operations(
+                    response,
+                    candidate_operations,
+                )
+                log_progress(
+                    "consolidate",
+                    "LLM operation consolidation parsed",
+                    candidates=len(candidate_operations),
+                    operations=len(consolidated_operations),
+                    attempt=attempt,
+                )
+                return consolidated_operations
+            except Exception as exc:
+                log_progress(
+                    "consolidate",
+                    "LLM operation consolidation invalid; retrying",
+                    attempt=attempt,
+                    error=exc,
+                )
+                current_prompt = (
+                    f"{base_prompt}\n\n"
+                    "<REPAIR_INSTRUCTION>\n"
+                    f"Your previous response was invalid: {exc}. Return one valid "
+                    "JSON object that follows every OUTPUT_FORMAT and TASK "
+                    "constraint. Do not include markdown fences, comments, or extra "
+                    "text.\n"
+                    "</REPAIR_INSTRUCTION>"
+                )
+
+    def _validate_consolidated_operations(self, response, candidate_operations):
+        if not isinstance(response, dict):
+            raise ValueError("Consolidation response must be a JSON object")
+        if set(response) != {"operations"}:
+            missing = "operations" not in response
+            unexpected_keys = sorted(set(response) - {"operations"})
+            details = []
+            if missing:
+                details.append("missing key: operations")
+            if unexpected_keys:
+                details.append(f"unexpected keys: {', '.join(unexpected_keys)}")
+            raise ValueError("Consolidation response has " + "; ".join(details))
+
+        operations_data = response["operations"]
+        if not isinstance(operations_data, list):
+            raise ValueError("Consolidated operations must be a list")
+        if not operations_data:
+            raise ValueError(
+                "Consolidated operations cannot be empty when candidates exist"
+            )
+        if len(operations_data) > len(candidate_operations):
+            raise ValueError(
+                "Consolidated operation count cannot exceed candidate count"
             )
 
-        user_prompt = """
-Merge the following patches into the current Gar.
+        consolidated_operations = [
+            RefinerOperation.from_dict(operation_data)
+            for operation_data in operations_data
+        ]
+        candidate_identities = {
+            (
+                operation.operation,
+                operation.section,
+                operation.band_number,
+                operation.rule_id,
+            )
+            for operation in candidate_operations
+        }
+        modified_targets = set()
+        added_rules = set()
+        for operation in consolidated_operations:
+            identity = (
+                operation.operation,
+                operation.section,
+                operation.band_number,
+                operation.rule_id,
+            )
+            if identity not in candidate_identities:
+                raise ValueError(
+                    "Consolidated operation targets an identity absent from the "
+                    f"candidates: {identity!r}"
+                )
 
-[CURRENT GAR]
-{current_gar}
+            if operation.operation == "modify":
+                target = (
+                    operation.section,
+                    operation.band_number,
+                    operation.rule_id,
+                )
+                if target in modified_targets:
+                    raise ValueError(
+                        f"Consolidated operations modify one target more than once: "
+                        f"{target!r}"
+                    )
+                modified_targets.add(target)
+                continue
 
-[NEW PATCHES TO INTEGRATE]
-{patches}
+            added_rule = (
+                operation.section,
+                operation.band_number,
+                operation.content,
+            )
+            if added_rule in added_rules:
+                raise ValueError(
+                    f"Consolidated operations contain a duplicate addition: "
+                    f"{added_rule!r}"
+                )
+            added_rules.add(added_rule)
 
-[MISSION]
-Synthesize them into a single, cohesive Markdown section. Resolve contradictions.
-Output # MASTER ADAPTATION RULE (GAR) only.
-""".format(
-            current_gar=p_current.get("Gar", "None"),
-            patches="\n".join(f"- For error mode {c['mode']}: {c['content']}" for c in candidates),
-        )
-
-        log_progress("consolidate", "LLM merge request started", candidates=len(candidates))
-        final_res = self._call_llm_compat(
-            "You are a Senior Rubric Architect.",
-            user_prompt,
-            is_reflector=True,
-        )
-        if final_res:
-            log_progress("consolidate", "LLM merge request finished", response_chars=len(final_res))
-            return _legacy_cleanup(final_res)
-        log_progress("consolidate", "LLM merge returned empty response")
-        return p_current.get("Gar", "")
+        return consolidated_operations
 
     def _get_top_k_modes(self, results, k):
         matrix_size = int(round(self.max_score * 2)) + 1
@@ -538,7 +706,7 @@ Output # MASTER ADAPTATION RULE (GAR) only.
         for result in results:
             t_idx = int(round(float(result["true"]) * 2))
             p_idx = int(round(float(result["pred"]) * 2))
-            if t_idx != p_idx and 0 <= t_idx < matrix_size and 0 <= p_idx < matrix_size:
+            if abs(t_idx - p_idx) > 1 and 0 <= t_idx < matrix_size and 0 <= p_idx < matrix_size:
                 weighted_cm[t_idx][p_idx] += float(result["misconf"])
         top_indices = np.argsort(weighted_cm.flatten())[::-1][:k]
         return [
@@ -567,8 +735,14 @@ Output # MASTER ADAPTATION RULE (GAR) only.
     def _generate_cm_report(self, results):
         stats = {}
         for result in results:
-            if int(round(float(result["true"]) * 2)) != int(round(float(result["pred"]) * 2)):
-                key = f"{result['true']}->{result['pred']}"
-                stats[key] = stats.get(key, 0) + 1
+            true_idx = int(round(float(result["true"]) * 2))
+            pred_idx = int(round(float(result["pred"]) * 2))
+            if true_idx == pred_idx or abs(true_idx - pred_idx) == 1:
+                continue
+            key = (
+                f"(HUMAN_REFERENCE_SCORE: {result['true']} | "
+                f"MODEL_PREDICTED_SCORE: {result['pred']})"
+            )
+            stats[key] = stats.get(key, 0) + 1
         sorted_stats = sorted(stats.items(), key=lambda item: item[1], reverse=True)[:5]
         return ", ".join([f"{key} ({count}pcs)" for key, count in sorted_stats])

@@ -107,6 +107,7 @@ python main.py --config configs/full_pipeline.yaml --num 5
 | `target_id` | question filter, for example `"66"` or `"66,67"` |
 | `rules_file` | optimized ASRO rules file used in `ASRO` mode |
 | `num` | optional sample limit |
+| `samples_per_essay` | independent baseline LLM scoring calls per essay; default `1` |
 | `workers` | parallel worker count |
 | `enable_ocr` | run OCR before scoring |
 | `force_ocr` | regenerate OCR text even when `.txt` exists |
@@ -122,6 +123,29 @@ Outputs are written under `out_dir`:
 - `error_report_{dataset_name}.csv` when any samples fail
 
 The console prints QWK and MAE when human labels are available.
+
+### Baseline Distribution Analysis
+
+Set `mode: baseline` and request more than one LLM sample per essay:
+
+```yaml
+pipeline:
+  mode: baseline
+  samples_per_essay: 10
+  temp: 0.7
+```
+
+The sample limit is applied before repetition, so `num: 20` with
+`samples_per_essay: 10` makes 200 baseline scoring calls. `workers` limits total
+concurrent calls. The same setting can be overridden from the command line:
+
+```bash
+python main.py --config configs/run_baseline.yaml --samples-per-essay 10
+```
+
+Repeated baseline runs write raw draws, per-essay summaries, a Markdown
+statistical report, and a score-distribution plot under `out_dir`. Reports are
+grouped by question ID so questions with different score scales are not mixed.
 
 ## OCR Only
 

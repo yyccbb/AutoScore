@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from collections import defaultdict
 
+from utils_asro.gar_models import gsr_to_text
 from utils_asro.progress import log_progress
 
 class GradeOptDataLoader:
@@ -168,7 +169,7 @@ class GradeOptDataLoader:
             return samples
 
         question = self.task_context.get("Gqs", "")
-        rubric = self.task_context.get("Gsr", "")
+        rubric = gsr_to_text(self.task_context.get("Gsr", ""))
         high_score_cutoff = self.max_score * 0.5
         request_items = []
         for sample in samples:

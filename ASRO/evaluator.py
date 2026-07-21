@@ -55,7 +55,7 @@ class ASROEvaluator:
         weighted_cm = np.zeros((matrix_size, matrix_size))
         for r in results:
             t_idx, p_idx = int(round(r['true'] * 2)), int(round(r['pred'] * 2))
-            if t_idx != p_idx and 0 <= t_idx < matrix_size and 0 <= p_idx < matrix_size:
+            if abs(t_idx - p_idx) > 1 and 0 <= t_idx < matrix_size and 0 <= p_idx < matrix_size:
                 weighted_cm[t_idx][p_idx] += r['misconf']
         
         flat_weighted = weighted_cm.flatten()
