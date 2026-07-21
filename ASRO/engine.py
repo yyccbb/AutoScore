@@ -23,7 +23,7 @@ finally:
         sys.path.insert(0, _path)
 
 from utils_asro.sampler import ASROSampler
-from utils_asro.gar_models import GAR, gar_from_value, gar_to_json
+from utils_asro.gar_models import GAR, RefinerOperation, gar_to_json
 from utils_asro.progress import log_progress
 from utils_asro.utils import print_round_dashboard, save_guideline, _legacy_cleanup, _score_to_tier
 
@@ -267,13 +267,10 @@ class ASROEngine:
 
             self.optimizer.stage = "refining"
             log_progress("refiner", "refiner step started", round=round_idx, mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}")
-            refined_gar = self.optimizer.refiner_step(p_current, diag, [], safe_mode, curr_round=round_idx)
+            refiner_operations = self.optimizer.refiner_step(p_current, diag, [], safe_mode, curr_round=round_idx)
             log_progress("refiner", "refiner step finished", round=round_idx, mode=f"{safe_mode[0] / 2.0}->{safe_mode[1] / 2.0}")
 
-            p_new = copy.deepcopy(p_current)
-            p_new["Gar"] = refined_gar
-            p_new["target_mode"] = safe_mode
-            return p_new
+            return refiner_operations
         except Exception as exc:
             log_progress("mode", "mode repair failed", round=round_idx, mode=mode, error=exc)
             print(f"[WARN] Mode {mode} optimization failed: {exc}")
@@ -440,18 +437,39 @@ class ASROEngine:
 
             global_cm_str = self._generate_cm_report(scan_results)
             log_progress("modes", "confusion report generated", round=round_idx, report=global_cm_str or "none")
-            new_candidate_pool = []
+            new_candidate_pool: list[list[RefinerOperation]] = []
             optimizer_failed_results = []
             for mode in error_modes:
-                candidate = self._process_single_mode(mode, current_guideline, scan_results, global_cm_str, round_idx)
-                if candidate and candidate.get("failed"):
-                    optimizer_failed_results.append(candidate)
-                elif candidate:
-                    new_candidate_pool.append(candidate)
+                candidate_operations = self._process_single_mode(mode, current_guideline, scan_results, global_cm_str, round_idx)
+                if isinstance(candidate_operations, dict) and candidate_operations.get("failed"):
+                    optimizer_failed_results.append(candidate_operations)
+                elif candidate_operations:
+                    new_candidate_pool.append(candidate_operations)
+
+            tiering_operation_candidates: list[RefinerOperation] = []
+            within_band_operation_candidates: dict[int, list[RefinerOperation]] = {}
+            for candidate_operations in new_candidate_pool:
+                for operation in candidate_operations:
+                    if operation.section == "broad_tiering_rules":
+                        tiering_operation_candidates.append(operation)
+                    elif operation.section == "within_band_scoring_rules":
+                        within_band_operation_candidates.setdefault(
+                            operation.band_number,
+                            [],
+                        ).append(operation)
+                    else:
+                        raise ValueError(
+                            f"Unsupported RefinerOperation section: "
+                            f"{operation.section!r}"
+                        )
 
             p_full = copy.deepcopy(current_guideline)
             log_progress("consolidate", "priority consolidation started", round=round_idx, candidates=len(new_candidate_pool))
-            p_full["Gar"] = self.priority_consolidate(new_candidate_pool, current_guideline)
+            p_full["Gar"] = self.priority_consolidate(
+                tiering_operation_candidates,
+                within_band_operation_candidates,
+                current_guideline,
+            )
             p_full["target_mode"] = "FULL_REPAIR"
             log_progress("consolidate", "priority consolidation finished", round=round_idx)
 
@@ -508,70 +526,171 @@ class ASROEngine:
         log_progress("optimization", "ASRO optimization finished", best_misconf=best_overall_misconf)
         return best_guideline
 
-    def priority_consolidate(self, mode_rules_pool, p_current):
-        if not mode_rules_pool:
-            log_progress("consolidate", "no candidates; keeping current Gar")
-            return gar_from_value(p_current["Gar"])
+    def priority_consolidate(
+        self,
+        tiering_operations: list[RefinerOperation],
+        within_band_operations: dict[int, list[RefinerOperation]],
+        p_current,
+    ) -> list[RefinerOperation]:
+        candidate_operations = list(tiering_operations)
+        for band_number in sorted(within_band_operations):
+            candidate_operations.extend(within_band_operations[band_number])
 
-        candidates = []
-        for guideline in mode_rules_pool:
-            if not guideline:
-                continue
-            mode = guideline.get("target_mode", (0, 0))
-            candidates.append(
-                {
-                    "mode": (
-                        f"(HUMAN_REFERENCE_SCORE: {mode[0] / 2.0} | "
-                        f"MODEL_PREDICTED_SCORE: {mode[1] / 2.0})"
-                    ),
-                    "content": gar_to_json(guideline["Gar"]),
-                }
+        if not candidate_operations:
+            log_progress("consolidate", "no operation candidates")
+            return []
+
+        def escape_cdata(value):
+            return str(value).replace("]]>", "]]]]><![CDATA[>")
+
+        tiering_operations_json = json.dumps(
+            [operation.to_dict() for operation in tiering_operations],
+            indent=2,
+            ensure_ascii=False,
+        )
+        within_band_operations_xml = "\n".join(
+            (
+                f'<BAND number="{band_number}">\n'
+                f'<![CDATA[{escape_cdata(json.dumps([operation.to_dict() for operation in operations], indent=2, ensure_ascii=False))}]]>\n'
+                f'</BAND>'
+            )
+            for band_number, operations in sorted(within_band_operations.items())
+        ) or "<NONE />"
+
+        from prompts import PRIORITY_CONSOLIDATE_PROMPT
+
+        base_prompt = PRIORITY_CONSOLIDATE_PROMPT.format(
+            current_gar=escape_cdata(gar_to_json(p_current["Gar"])),
+            tiering_operations_json=escape_cdata(tiering_operations_json),
+            within_band_operations_xml=within_band_operations_xml,
+        )
+        current_prompt = base_prompt
+        attempt = 0
+
+        while True:
+            attempt += 1
+            log_progress(
+                "consolidate",
+                "LLM operation consolidation started",
+                candidates=len(candidate_operations),
+                attempt=attempt,
+            )
+            raw_response = self._call_llm_compat(
+                "",
+                current_prompt,
+                is_reflector=True,
+            )
+            try:
+                response = json.loads(_legacy_cleanup(raw_response))
+                consolidated_operations = self._validate_consolidated_operations(
+                    response,
+                    candidate_operations,
+                )
+                log_progress(
+                    "consolidate",
+                    "LLM operation consolidation parsed",
+                    candidates=len(candidate_operations),
+                    operations=len(consolidated_operations),
+                    attempt=attempt,
+                )
+                return consolidated_operations
+            except Exception as exc:
+                log_progress(
+                    "consolidate",
+                    "LLM operation consolidation invalid; retrying",
+                    attempt=attempt,
+                    error=exc,
+                )
+                current_prompt = (
+                    f"{base_prompt}\n\n"
+                    "<REPAIR_INSTRUCTION>\n"
+                    f"Your previous response was invalid: {exc}. Return one valid "
+                    "JSON object that follows every OUTPUT_FORMAT and TASK "
+                    "constraint. Do not include markdown fences, comments, or extra "
+                    "text.\n"
+                    "</REPAIR_INSTRUCTION>"
+                )
+
+    def _validate_consolidated_operations(self, response, candidate_operations):
+        if not isinstance(response, dict):
+            raise ValueError("Consolidation response must be a JSON object")
+        if set(response) != {"operations"}:
+            missing = "operations" not in response
+            unexpected_keys = sorted(set(response) - {"operations"})
+            details = []
+            if missing:
+                details.append("missing key: operations")
+            if unexpected_keys:
+                details.append(f"unexpected keys: {', '.join(unexpected_keys)}")
+            raise ValueError("Consolidation response has " + "; ".join(details))
+
+        operations_data = response["operations"]
+        if not isinstance(operations_data, list):
+            raise ValueError("Consolidated operations must be a list")
+        if not operations_data:
+            raise ValueError(
+                "Consolidated operations cannot be empty when candidates exist"
+            )
+        if len(operations_data) > len(candidate_operations):
+            raise ValueError(
+                "Consolidated operation count cannot exceed candidate count"
             )
 
-        user_prompt = """
-Merge the following patches into the current Gar.
+        consolidated_operations = [
+            RefinerOperation.from_dict(operation_data)
+            for operation_data in operations_data
+        ]
+        candidate_identities = {
+            (
+                operation.operation,
+                operation.section,
+                operation.band_number,
+                operation.rule_id,
+            )
+            for operation in candidate_operations
+        }
+        modified_targets = set()
+        added_rules = set()
+        for operation in consolidated_operations:
+            identity = (
+                operation.operation,
+                operation.section,
+                operation.band_number,
+                operation.rule_id,
+            )
+            if identity not in candidate_identities:
+                raise ValueError(
+                    "Consolidated operation targets an identity absent from the "
+                    f"candidates: {identity!r}"
+                )
 
-[CURRENT GAR]
-{current_gar}
+            if operation.operation == "modify":
+                target = (
+                    operation.section,
+                    operation.band_number,
+                    operation.rule_id,
+                )
+                if target in modified_targets:
+                    raise ValueError(
+                        f"Consolidated operations modify one target more than once: "
+                        f"{target!r}"
+                    )
+                modified_targets.add(target)
+                continue
 
-[NEW PATCHES TO INTEGRATE]
-{patches}
+            added_rule = (
+                operation.section,
+                operation.band_number,
+                operation.content,
+            )
+            if added_rule in added_rules:
+                raise ValueError(
+                    f"Consolidated operations contain a duplicate addition: "
+                    f"{added_rule!r}"
+                )
+            added_rules.add(added_rule)
 
-[MISSION]
-Synthesize them into one complete structured GAR. Resolve contradictions while preserving canonical_bands.
-The schema example below is abbreviated. Return every existing canonical band and preserve every existing rule ID unless replacing that rule.
-Use integer band_number values in canonical_bands.
-Store broad_tiering_rules and within_band_scoring_rules inside the matching canonical band object.
-Use stable string rule IDs as dictionary keys, e.g. "bt_5_001" for Band 5 broad-tiering rules and "wb_5_001" for Band 5 within-band scoring rules.
-Put band-placement guidance in a band's broad_tiering_rules and exact-score guidance in a band's within_band_scoring_rules to match the human reference scores directly.
-Output only one valid JSON object with exactly this top-level field:
-{{
-  "canonical_bands": [
-    {{
-      "band_number": 5,
-      "minimum_score": 13,
-      "maximum_score": 15,
-      "broad_tiering_rules": {{"bt_5_001": "rule text"}},
-      "within_band_scoring_rules": {{"wb_5_001": "rule text"}}
-    }}
-  ]
-}}
-""".format(
-            current_gar=gar_to_json(p_current["Gar"]),
-            patches="\n".join(f"- For error mode {c['mode']}: {c['content']}" for c in candidates),
-        )
-
-        log_progress("consolidate", "LLM merge request started", candidates=len(candidates))
-        final_res = self._call_llm_compat(
-            "You are a Senior Rubric Architect.",
-            user_prompt,
-            is_reflector=True,
-        )
-        if final_res:
-            log_progress("consolidate", "LLM merge request finished", response_chars=len(final_res))
-            return GAR.from_json(_legacy_cleanup(final_res))
-        log_progress("consolidate", "LLM merge returned empty response")
-        return gar_from_value(p_current["Gar"])
+        return consolidated_operations
 
     def _get_top_k_modes(self, results, k):
         matrix_size = int(round(self.max_score * 2)) + 1

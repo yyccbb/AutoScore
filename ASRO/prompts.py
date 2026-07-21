@@ -375,6 +375,57 @@ def build_refiner_prompt_template(is_same_band):
     return f"{prompt_before_task}{selected_task}{prompt_after_task}"
 
 
+PRIORITY_CONSOLIDATE_PROMPT = """
+<ROLE>
+You are a conservative conflict resolver for Adaptation Rules (Gar) operations in automated English writing assessment. Your responsibility is to compare proposed RefinerOperation objects and return a final non-conflicting operation list for a deterministic executor. You do not execute operations, rewrite the Gar, or invent new rule-change targets.
+</ROLE>
+
+<CURRENT_GAR>
+<![CDATA[{current_gar}]]>
+</CURRENT_GAR>
+
+<TIERING_OPERATION_CANDIDATES>
+<![CDATA[{tiering_operations_json}]]>
+</TIERING_OPERATION_CANDIDATES>
+
+<WITHIN_BAND_OPERATION_CANDIDATES>
+{within_band_operations_xml}
+</WITHIN_BAND_OPERATION_CANDIDATES>
+
+<TASK>
+Resolve differences between candidate operations by comparing their complete rule-change text in content and the evidence or justification in reason.
+
+1. Retain every operation that does not conflict with another operation.
+2. Evaluate all broad_tiering_rules operations together, including operations assigned to different bands, because tiering guidance can interact across band boundaries.
+3. Evaluate within_band_scoring_rules operations only against candidates from the same band. Operations in different within-band groups are independent.
+4. When candidates for the same target are compatible or duplicative, keep the clearest version or merge their supported details into one self-contained operation. When they conflict, keep the candidate whose reason provides stronger direct support, greater specificity, and lower risk of unintended scoring changes.
+5. Preserve operation, section, band_number, and rule_id. A merged operation may combine only candidates with the same target identity. Do not create a target that is absent from the candidates.
+6. Keep distinct, compatible add operations when they express separate rule changes. Do not return duplicate additions or more operations than were supplied.
+7. Use CURRENT_GAR only as context for detecting contradictions. Do not apply the operations or return a rewritten Gar.
+
+Return at least one operation whenever candidates are supplied.
+</TASK>
+
+<OUTPUT_FORMAT>
+You must output ONLY one valid JSON object with exactly one top-level key, operations. Every operation must contain exactly the six fields shown below:
+{{
+  "operations": [
+    {{
+      "operation": "modify",
+      "section": "broad_tiering_rules",
+      "band_number": 4,
+      "rule_id": "bt_4_001",
+      "content": "Complete consolidated rule text.",
+      "reason": "Why this operation was retained, selected, or merged."
+    }}
+  ]
+}}
+
+operation must be add or modify. section must be broad_tiering_rules or within_band_scoring_rules. band_number must be an integer from 1 through 5. content and reason must be non-empty strings. A modify operation must preserve an existing candidate rule_id. An add operation must use null for rule_id.
+</OUTPUT_FORMAT>
+"""
+
+
 GSR_EXTRACTION_PROMPT = """
 You are structurally parsing an official English essay scoring rubric.
 
