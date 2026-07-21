@@ -465,13 +465,21 @@ class ASROEngine:
 
             p_full = copy.deepcopy(current_guideline)
             log_progress("consolidate", "priority consolidation started", round=round_idx, candidates=len(new_candidate_pool))
-            p_full["Gar"] = self.priority_consolidate(
+            consolidated_operations = self.priority_consolidate(
                 tiering_operation_candidates,
                 within_band_operation_candidates,
                 current_guideline,
             )
+            p_full["Gar"] = current_guideline["Gar"].apply_operations(
+                consolidated_operations
+            )
             p_full["target_mode"] = "FULL_REPAIR"
-            log_progress("consolidate", "priority consolidation finished", round=round_idx)
+            log_progress(
+                "consolidate",
+                "priority consolidation finished",
+                round=round_idx,
+                operations=len(consolidated_operations),
+            )
 
             validation_results = self.evaluate_validation_sequential(p_full, D_val)
             self._save_intermediate_records(round_idx, D_val, validation_results, is_validation=True)

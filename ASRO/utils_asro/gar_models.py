@@ -279,6 +279,76 @@ class GAR:
     def to_json(self):
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
 
+    def apply_operations(
+        self,
+        operations: list[RefinerOperation],
+    ) -> "GAR":
+        updated_gar = GAR.from_dict(self.to_dict())
+        bands_by_number = {}
+        for band in updated_gar.canonical_bands:
+            if band.band_number in bands_by_number:
+                raise ValueError(
+                    f"GAR contains duplicate Band {band.band_number} entries"
+                )
+            bands_by_number[band.band_number] = band
+
+        for operation in operations:
+            if not isinstance(operation, RefinerOperation):
+                raise TypeError(
+                    "GAR operations must contain only RefinerOperation objects"
+                )
+
+            band = bands_by_number.get(operation.band_number)
+            if band is None:
+                raise ValueError(
+                    f"GAR does not contain Band {operation.band_number}"
+                )
+            rules = getattr(band, operation.section)
+            content = _strip_leading_numbering(operation.content)
+            if not content:
+                raise ValueError("RefinerOperation content is empty after normalization")
+
+            if operation.operation == "modify":
+                if operation.rule_id not in rules:
+                    raise ValueError(
+                        f"Gar rule {operation.rule_id!r} does not exist in "
+                        f"Band {operation.band_number} {operation.section}"
+                    )
+                rules[operation.rule_id] = content
+                continue
+
+            if content in rules.values():
+                continue
+
+            prefix = (
+                "bt"
+                if operation.section == "broad_tiering_rules"
+                else "wb"
+            )
+            rule_id_pattern = re.compile(
+                rf"^{prefix}_{operation.band_number}_(\d+)$"
+            )
+            highest_suffix = max(
+                (
+                    int(match.group(1))
+                    for rule_id in rules
+                    if (match := rule_id_pattern.fullmatch(rule_id))
+                ),
+                default=0,
+            )
+            next_suffix = highest_suffix + 1
+            new_rule_id = (
+                f"{prefix}_{operation.band_number}_{next_suffix:03d}"
+            )
+            while new_rule_id in rules:
+                next_suffix += 1
+                new_rule_id = (
+                    f"{prefix}_{operation.band_number}_{next_suffix:03d}"
+                )
+            rules[new_rule_id] = content
+
+        return updated_gar
+
     def banding_rules_text(self):
         ordered_bands = sorted(
             self.canonical_bands,
